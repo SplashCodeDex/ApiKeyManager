@@ -66,6 +66,18 @@ export interface ApiKeyManagerOptions {
     strategy?: LoadBalancingStrategy;
     fallbackFn?: () => any;
     concurrency?: number;    // Max concurrent execute() calls
+    semanticCache?: {
+        threshold?: number;  // Similarity threshold (0.0 - 1.0, default 0.95)
+        ttlMs?: number;      // Cache TTL
+        getEmbedding: (text: string) => Promise<number[]>;
+    };
+}
+
+export interface CacheEntry {
+    vector: number[];
+    prompt: string;
+    response: any;
+    timestamp: number;
 }
 
 // ─── Event Types ─────────────────────────────────────────────────────────────
@@ -182,6 +194,79 @@ export class LatencyStrategy implements LoadBalancingStrategy {
     }
 }
 
+// ─── Semantic Engine ─────────────────────────────────────────────────────────
+
+/**
+ * High-performance Vanilla Semantic Cache
+ * Implements Cosine Similarity math from scratch.
+ */
+export class SemanticCache {
+    private entries: CacheEntry[] = [];
+    private threshold: number;
+    private ttlMs: number;
+
+    constructor(threshold: number = 0.95, ttlMs: number = 24 * 60 * 60 * 1000) {
+        this.threshold = threshold;
+        this.ttlMs = ttlMs;
+    }
+
+    public set(prompt: string, vector: number[], response: any) {
+        // Expire old entry for same prompt if exists
+        this.entries = this.entries.filter(e => e.prompt !== prompt);
+        this.entries.push({
+            prompt,
+            vector,
+            response,
+            timestamp: Date.now()
+        });
+        // Optional: Cap size to prevent memory leaks
+        if (this.entries.length > 500) this.entries.shift();
+    }
+
+    public get(vector: number[]): any | null {
+        const now = Date.now();
+        let bestMatch: CacheEntry | null = null;
+        let highestSimilarity = -1;
+
+        for (let i = this.entries.length - 1; i >= 0; i--) {
+            const entry = this.entries[i];
+
+            // Check TTL
+            if (now - entry.timestamp > this.ttlMs) {
+                this.entries.splice(i, 1);
+                continue;
+            }
+
+            const similarity = this.calculateCosineSimilarity(vector, entry.vector);
+            if (similarity >= this.threshold && similarity > highestSimilarity) {
+                highestSimilarity = similarity;
+                bestMatch = entry;
+            }
+        }
+
+        return bestMatch ? bestMatch.response : null;
+    }
+
+    /**
+     * Vanilla Cosine Similarity: (A·B) / (||A|| * ||B||)
+     */
+    private calculateCosineSimilarity(vecA: number[], vecB: number[]): number {
+        if (vecA.length !== vecB.length) return 0;
+        let dotProduct = 0;
+        let normA = 0;
+        let normB = 0;
+
+        for (let i = 0; i < vecA.length; i++) {
+            dotProduct += vecA[i] * vecB[i];
+            normA += vecA[i] * vecA[i];
+            normB += vecB[i] * vecB[i];
+        }
+
+        const denominator = Math.sqrt(normA) * Math.sqrt(normB);
+        return denominator === 0 ? 0 : dotProduct / denominator;
+    }
+}
+
 // ─── Main Class ──────────────────────────────────────────────────────────────
 
 export class ApiKeyManager extends EventEmitter {
@@ -198,6 +283,10 @@ export class ApiKeyManager extends EventEmitter {
     // Health check state
     private healthCheckFn?: (key: string) => Promise<boolean>;
     private healthCheckInterval?: ReturnType<typeof setInterval>;
+
+    // Semantic Cache v4
+    private semanticCache?: SemanticCache;
+    private getEmbeddingFn?: (text: string) => Promise<number[]>;
 
     /**
      * Constructor supports both legacy positional args and new options object.
@@ -217,7 +306,7 @@ export class ApiKeyManager extends EventEmitter {
 
         // Detect if second arg is options object or legacy storage
         let options: ApiKeyManagerOptions = {};
-        if (storageOrOptions && typeof storageOrOptions === 'object' && ('storage' in storageOrOptions || 'strategy' in storageOrOptions || 'fallbackFn' in storageOrOptions || 'concurrency' in storageOrOptions)) {
+        if (storageOrOptions && typeof storageOrOptions === 'object' && ('storage' in storageOrOptions || 'strategy' in storageOrOptions || 'fallbackFn' in storageOrOptions || 'concurrency' in storageOrOptions || 'semanticCache' in storageOrOptions)) {
             // New v3 options object
             options = storageOrOptions as ApiKeyManagerOptions;
         } else {
@@ -235,6 +324,15 @@ export class ApiKeyManager extends EventEmitter {
         this.strategy = options.strategy || new StandardStrategy();
         this.fallbackFn = options.fallbackFn;
         this.maxConcurrency = options.concurrency || Infinity;
+
+        // Init Semantic Cache if provided
+        if (options.semanticCache) {
+            this.semanticCache = new SemanticCache(
+                options.semanticCache.threshold,
+                options.semanticCache.ttlMs
+            );
+            this.getEmbeddingFn = options.semanticCache.getEmbedding;
+        }
 
         // Normalize input to objects
         let inputKeys: { key: string; weight?: number; provider?: string }[] = [];
@@ -514,13 +612,30 @@ export class ApiKeyManager extends EventEmitter {
      */
     public async execute<T>(
         fn: (key: string, signal?: AbortSignal) => Promise<T>,
-        options?: ExecuteOptions
+        options?: ExecuteOptions & { prompt?: string }
     ): Promise<T> {
         const maxRetries = options?.maxRetries ?? 0;
         const timeoutMs = options?.timeoutMs;
         const finishReason = options?.finishReason;
+        const prompt = options?.prompt;
 
-        // Bulkhead check
+        // 1. Semantic Cache Check (Mastermind Edition)
+        let currentPromptVector: number[] | null = null;
+        if (this.semanticCache && this.getEmbeddingFn && prompt) {
+            try {
+                currentPromptVector = await this.getEmbeddingFn(prompt);
+                const cachedResponse = this.semanticCache.get(currentPromptVector);
+                if (cachedResponse !== null) {
+                    console.log(`[Semantic Cache HIT] for prompt: "${prompt.slice(0, 30)}..."`);
+                    this.emit('executeSuccess', 'CACHE_HIT', 0);
+                    return cachedResponse as T;
+                }
+            } catch (e) {
+                console.warn('[Semantic Cache Check Failed] Proceeding to live API', e);
+            }
+        }
+
+        // 2. Bulkhead check
         if (this.activeCalls >= this.maxConcurrency) {
             this.emit('bulkheadRejected');
             throw new BulkheadRejectionError();
@@ -528,7 +643,14 @@ export class ApiKeyManager extends EventEmitter {
 
         this.activeCalls++;
         try {
-            return await this._executeWithRetry(fn, maxRetries, timeoutMs, finishReason);
+            const result = await this._executeWithRetry(fn, maxRetries, timeoutMs, finishReason);
+
+            // 3. Store in Semantic Cache on success
+            if (this.semanticCache && prompt && currentPromptVector) {
+                this.semanticCache.set(prompt, currentPromptVector, result);
+            }
+
+            return result;
         } finally {
             this.activeCalls--;
         }
