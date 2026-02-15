@@ -1,8 +1,8 @@
-# @splashcodex/api-key-manager
+# @splashcodex/ApiKeyManager
 
 > Universal API Key Rotation System with Resilience, Load Balancing & AI Gateway Features
 
-[![npm version](https://img.shields.io/npm/v/@splashcodex/api-key-manager)](https://www.npmjs.com/package/@splashcodex/api-key-manager)
+[![npm version](https://img.shields.io/npm/v/@splashcodex/ApiKeyManager)](https://www.npmjs.com/package/@splashcodex/ApiKeyManager)
 
 ## Features
 
