@@ -59,6 +59,7 @@ export interface ExecuteOptions {
     timeoutMs?: number;      // Timeout per attempt in ms
     maxRetries?: number;     // Max retry attempts (default: 0 = no retry)
     finishReason?: string;   // For Gemini finishReason handling
+    provider?: string;       // Filter keys by provider (e.g. 'openai')
 }
 
 export interface ApiKeyManagerOptions {
@@ -618,6 +619,7 @@ export class ApiKeyManager extends EventEmitter {
         const timeoutMs = options?.timeoutMs;
         const finishReason = options?.finishReason;
         const prompt = options?.prompt;
+        const provider = options?.provider;
 
         // 1. Semantic Cache Check (Mastermind Edition)
         let currentPromptVector: number[] | null = null;
@@ -643,7 +645,7 @@ export class ApiKeyManager extends EventEmitter {
 
         this.activeCalls++;
         try {
-            const result = await this._executeWithRetry(fn, maxRetries, timeoutMs, finishReason);
+            const result = await this._executeWithRetry(fn, maxRetries, timeoutMs, finishReason, provider);
 
             // 3. Store in Semantic Cache on success
             if (this.semanticCache && prompt && currentPromptVector) {
@@ -660,12 +662,13 @@ export class ApiKeyManager extends EventEmitter {
         fn: (key: string, signal?: AbortSignal) => Promise<T>,
         maxRetries: number,
         timeoutMs?: number,
-        finishReason?: string
+        finishReason?: string,
+        provider?: string
     ): Promise<T> {
         let lastError: any;
 
         for (let attempt = 0; attempt <= maxRetries; attempt++) {
-            const key = this.getKey();
+            const key = provider ? this.getKeyByProvider(provider) : this.getKey();
 
             if (!key) {
                 // All keys exhausted — try fallback
