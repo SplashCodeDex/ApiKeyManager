@@ -751,7 +751,10 @@ export class ApiKeyManager extends EventEmitter {
     }
 
     private _sleep(ms: number): Promise<void> {
-        return new Promise(resolve => setTimeout(resolve, ms));
+        return new Promise(resolve => {
+            const timer = setTimeout(resolve, ms);
+            if (timer.unref) timer.unref();
+        });
     }
 
     // ─── Health Checks ───────────────────────────────────────────────────────
@@ -770,6 +773,7 @@ export class ApiKeyManager extends EventEmitter {
     public startHealthChecks(intervalMs: number = 60_000) {
         this.stopHealthChecks(); // Clear any existing interval
         this.healthCheckInterval = setInterval(() => this._runHealthChecks(), intervalMs);
+        if (this.healthCheckInterval.unref) this.healthCheckInterval.unref();
     }
 
     /**

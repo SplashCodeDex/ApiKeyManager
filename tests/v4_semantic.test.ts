@@ -59,4 +59,27 @@ describe('ApiKeyManager v4.0 Semantic Cache', () => {
         await manager.execute(mockFn, { prompt: 'B' });
         expect(mockFn).toHaveBeenCalledTimes(2); // Should be a MISS
     });
+
+    test('Recursion Guard prevents infinite loops', async () => {
+        const mockFn = jest.fn().mockResolvedValue('Live Response');
+
+        const manager = new ApiKeyManager(['key1'], {
+            semanticCache: {
+                threshold: 0.9,
+                getEmbedding: async (text: string) => {
+                    // CRITICAL: This callback calls execute() again with a prompt.
+                    // Without a recursion guard, this would loop infinitely.
+                    await manager.execute(async () => 'Nested Result', { prompt: text });
+                    return [1, 0, 0];
+                }
+            }
+        });
+
+        // This should complete successfully because the internal execute()
+        // will skip the semantic cache check due to the guard.
+        const res = await manager.execute(mockFn, { prompt: 'Recursion Test' });
+
+        expect(res).toBe('Live Response');
+        expect(mockFn).toHaveBeenCalledTimes(1);
+    });
 });
