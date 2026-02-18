@@ -4,3 +4,4 @@ dist/
 .DS_Store
 .env
 node_modules
+test_output_multi.txt

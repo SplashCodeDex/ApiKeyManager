@@ -1,4 +1,4 @@
-# @splashcodex/ApiKeyManager v4.0 — Mastermind Edition
+# @splashcodex/ApiKeyManager v4.1 — Mastermind Edition
 
 > Universal API Key Rotation System with Resilience, Load Balancing, Semantic Caching & AI Gateway Features
 
@@ -18,6 +18,7 @@
 - **Health Checks** — Periodic key validation and auto-recovery
 - **Bulkhead / Concurrency** — Limits concurrent `execute()` calls
 - **Semantic Cache** *(v4 NEW)* — Cosine-similarity cache with pluggable embeddings
+- **Streaming Support** *(v4.1 NEW)* — `executeStream()` with initial retry + cache replay
 - **Recursion Guard** *(v4 NEW)* — Prevents infinite loops when `getEmbedding` calls `execute()`
 - **State Persistence** — Survives restarts via pluggable storage
 - **100% Backward Compatible** — v1.x, v2.x, and v3.x code works without changes
@@ -69,6 +70,24 @@ const r1 = await manager.execute(apiFn, { prompt: 'What is the weather?' });
 // Second call → Semantic Cache HIT (no API call)
 const r2 = await manager.execute(apiFn, { prompt: 'How is the weather today?' });
 ```
+
+### v4.1 — Streaming Support
+
+Real-time response handling with the same resilience as `execute()`.
+
+```typescript
+const stream = await manager.executeStream(async (key) => {
+    return await gemini.generateContentStream({ prompt: "..." });
+}, { prompt: "..." });
+
+for await (const chunk of stream) {
+    console.log(chunk.text()); // Zero-latency interaction
+}
+```
+
+- **Smart Retries**: If the initial connection fails, it rotates keys and retries.
+- **Cache Replay**: Semantic cache accumulates stream chunks and replays the full stream on a cache hit.
+- **Event Driven**: Emits `executeSuccess`, `executeFailed`, and `retry` just like the standard wrapper.
 
 > **Recursion Guard**: If your `getEmbedding` callback internally calls `execute()`,
 > the cache automatically skips on nested calls to prevent infinite recursion.
@@ -213,6 +232,7 @@ new ApiKeyManager(keys, {
 | `markFailed(key, classification)` | Report failure with error type |
 | `classifyError(error, finishReason?)` | Classify an error automatically |
 | `execute(fn, options?)` | Full lifecycle wrapper with retry/timeout |
+| `executeStream(fn, options?)` | Streaming lifecycle wrapper |
 | `calculateBackoff(attempt)` | Get backoff delay with jitter |
 | `getStats()` | Get pool health statistics |
 | `getKeyCount()` | Count of non-DEAD keys |

@@ -664,6 +664,140 @@ export class ApiKeyManager extends EventEmitter {
         }
     }
 
+    /**
+     * Executes a streaming function (AsyncGenerator) with retry logic and semantic caching.
+     *
+     * @example
+     *   const stream = await manager.executeStream(async (key) => {
+     *     return await gemini.generateContentStream({ prompt: "..." });
+     *   }, { prompt: "..." });
+     *
+     *   for await (const chunk of stream) {
+     *     console.log(chunk.text());
+     *   }
+     */
+    public async *executeStream<T>(
+        fn: (key: string, signal?: AbortSignal) => AsyncGenerator<T, any, unknown>,
+        options?: ExecuteOptions & { prompt?: string }
+    ): AsyncGenerator<T, any, unknown> {
+        const maxRetries = options?.maxRetries ?? 0;
+        const timeoutMs = options?.timeoutMs;
+        const finishReason = options?.finishReason;
+        const prompt = options?.prompt;
+        const provider = options?.provider;
+
+        // 1. Semantic Cache Check
+        let currentPromptVector: number[] | null = null;
+        if (this.semanticCache && this.getEmbeddingFn && prompt && !this._isResolvingEmbedding) {
+            try {
+                this._isResolvingEmbedding = true;
+                currentPromptVector = await this.getEmbeddingFn(prompt);
+                const cachedResponse = this.semanticCache.get(currentPromptVector);
+                if (cachedResponse !== null) {
+                    console.log(`[Semantic Cache HIT] Streaming cached response for prompt: "${prompt.slice(0, 30)}..."`);
+                    this.emit('executeSuccess', 'CACHE_HIT_STREAM', 0);
+                    // Replay full response as a single chunk (or iterate if it's an array)
+                    if (Array.isArray(cachedResponse)) {
+                        for (const chunk of cachedResponse) yield chunk as T;
+                    } else {
+                        yield cachedResponse as T;
+                    }
+                    return;
+                }
+            } catch (e) {
+                console.warn('[Semantic Cache Check Failed] Proceeding to live stream', e);
+            } finally {
+                this._isResolvingEmbedding = false;
+            }
+        }
+
+        // 2. Bulkhead check
+        if (this.activeCalls >= this.maxConcurrency) {
+            this.emit('bulkheadRejected');
+            throw new BulkheadRejectionError();
+        }
+
+        this.activeCalls++;
+        const accumulatedChunks: T[] = [];
+        let lastError: any;
+
+        try {
+            for (let attempt = 0; attempt <= maxRetries; attempt++) {
+                const key = provider ? this.getKeyByProvider(provider) : this.getKey();
+
+                if (!key) {
+                    if (this.fallbackFn) {
+                        this.emit('fallback', 'all keys exhausted (stream)');
+                        yield this.fallbackFn();
+                        return;
+                    }
+                    throw new AllKeysExhaustedError();
+                }
+
+                let iterator: AsyncGenerator<T, any, unknown>;
+                try {
+                    // Start the generator
+                    iterator = fn(key);
+
+                    // PRIME THE ITERATOR:
+                    // Try to get the first chunk. This forces the generator body to
+                    // execute until the first 'yield' or until it throws.
+                    const firstResult = await iterator.next();
+
+                    // If we got here, the INITIAL connection/logic succeeded!
+                    if (firstResult.done) return;
+
+                    // Yield first chunk
+                    yield firstResult.value;
+                    if (this.semanticCache && prompt) accumulatedChunks.push(firstResult.value);
+
+                    // Yield rest of chunks
+                    for await (const chunk of iterator) {
+                        yield chunk;
+                        if (this.semanticCache && prompt) accumulatedChunks.push(chunk);
+                    }
+
+                    // Success! Store in cache
+                    if (this.semanticCache && prompt && currentPromptVector && accumulatedChunks.length > 0) {
+                        this.semanticCache.set(prompt, currentPromptVector, accumulatedChunks);
+                    }
+
+                    return; // Full success, exit retry loop
+
+                } catch (error: any) {
+                    lastError = error;
+                    const classification = this.classifyError(error, finishReason);
+
+                    this.markFailed(key, classification);
+                    this.emit('executeFailed', key, error);
+
+                    // Note: If we already yielded the FIRST chunk, we CANNOT retry the connection
+                    // because the user has already received data. Mid-stream failures propagate.
+                    if (accumulatedChunks.length > 0) {
+                        throw error;
+                    }
+
+                    if (!classification.retryable || attempt >= maxRetries) {
+                        if (this.fallbackFn && attempt >= maxRetries) {
+                            this.emit('fallback', 'max retries exceeded (stream)');
+                            yield this.fallbackFn();
+                            return;
+                        }
+                        throw error;
+                    }
+
+                    const delay = this.calculateBackoff(attempt);
+                    this.emit('retry', key, attempt + 1, delay);
+                    await this._sleep(delay);
+                }
+            }
+        } finally {
+            this.activeCalls--;
+        }
+
+        throw lastError;
+    }
+
     private async _executeWithRetry<T>(
         fn: (key: string, signal?: AbortSignal) => Promise<T>,
         maxRetries: number,
