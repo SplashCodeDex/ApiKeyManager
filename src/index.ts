@@ -1,5 +1,5 @@
 /**
- * Universal ApiKeyManager v3.0
+ * Universal ApiKeyManager v4.0 — Mastermind Edition
  * Implements: Rotation, Circuit Breaker, Persistence, Exponential Backoff, Strategies,
  *             Event Emitter, Fallback, execute(), Timeout, Auto-Retry, Provider Tags,
  *             Health Checks, Bulkhead/Concurrency
