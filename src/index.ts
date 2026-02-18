@@ -288,6 +288,7 @@ export class ApiKeyManager extends EventEmitter {
     // Semantic Cache v4
     private semanticCache?: SemanticCache;
     private getEmbeddingFn?: (text: string) => Promise<number[]>;
+    private _isResolvingEmbedding: boolean = false; // Recursion guard
 
     /**
      * Constructor supports both legacy positional args and new options object.
@@ -622,9 +623,12 @@ export class ApiKeyManager extends EventEmitter {
         const provider = options?.provider;
 
         // 1. Semantic Cache Check (Mastermind Edition)
+        // Guard: skip cache if we're already resolving an embedding to prevent
+        // infinite recursion when getEmbeddingFn calls execute() internally.
         let currentPromptVector: number[] | null = null;
-        if (this.semanticCache && this.getEmbeddingFn && prompt) {
+        if (this.semanticCache && this.getEmbeddingFn && prompt && !this._isResolvingEmbedding) {
             try {
+                this._isResolvingEmbedding = true;
                 currentPromptVector = await this.getEmbeddingFn(prompt);
                 const cachedResponse = this.semanticCache.get(currentPromptVector);
                 if (cachedResponse !== null) {
@@ -634,6 +638,8 @@ export class ApiKeyManager extends EventEmitter {
                 }
             } catch (e) {
                 console.warn('[Semantic Cache Check Failed] Proceeding to live API', e);
+            } finally {
+                this._isResolvingEmbedding = false;
             }
         }
 

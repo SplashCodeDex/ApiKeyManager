@@ -1,6 +1,6 @@
-# @splashcodex/ApiKeyManager
+# @splashcodex/ApiKeyManager v4.0 — Mastermind Edition
 
-> Universal API Key Rotation System with Resilience, Load Balancing & AI Gateway Features
+> Universal API Key Rotation System with Resilience, Load Balancing, Semantic Caching & AI Gateway Features
 
 [![npm version](https://img.shields.io/npm/v/@splashcodex/ApiKeyManager)](https://www.npmjs.com/package/@splashcodex/ApiKeyManager)
 
@@ -17,8 +17,10 @@
 - **Provider Tagging** — Multi-provider routing (`openai`, `gemini`, etc.)
 - **Health Checks** — Periodic key validation and auto-recovery
 - **Bulkhead / Concurrency** — Limits concurrent `execute()` calls
+- **Semantic Cache** *(v4 NEW)* — Cosine-similarity cache with pluggable embeddings
+- **Recursion Guard** *(v4 NEW)* — Prevents infinite loops when `getEmbedding` calls `execute()`
 - **State Persistence** — Survives restarts via pluggable storage
-- **100% Backward Compatible** — v1.x and v2.x code works without changes
+- **100% Backward Compatible** — v1.x, v2.x, and v3.x code works without changes
 
 ## Installation
 
@@ -36,16 +38,44 @@ const manager = new ApiKeyManager(['key1', 'key2', 'key3']);
 const key = manager.getKey();
 manager.markSuccess(key!);
 
-// v3 — Full power
+// v3+ — Full power
 const result = await manager.execute(
   (key) => fetch(`https://api.example.com?key=${key}`),
   { maxRetries: 3, timeoutMs: 5000 }
 );
 ```
 
-## v3.0 — execute() Wrapper
+## v4.0 — Semantic Cache (Mastermind Edition)
 
-The star feature. Wraps the entire lifecycle into one method:
+Automatically cache API responses by semantic similarity. Identical or near-identical prompts return cached results without consuming API quota.
+
+```typescript
+import { ApiKeyManager } from '@splashcodex/api-key-manager';
+
+const manager = new ApiKeyManager(['key1', 'key2'], {
+  semanticCache: {
+    threshold: 0.92,  // 92% cosine similarity to match
+    ttlMs: 86400000,  // 24-hour TTL (default)
+    getEmbedding: async (text) => {
+      // Your embedding function (e.g. OpenAI, Gemini, local model)
+      return await myEmbeddingModel.embed(text);
+    }
+  }
+});
+
+// First call → API hit, cached
+const r1 = await manager.execute(apiFn, { prompt: 'What is the weather?' });
+
+// Second call → Semantic Cache HIT (no API call)
+const r2 = await manager.execute(apiFn, { prompt: 'How is the weather today?' });
+```
+
+> **Recursion Guard**: If your `getEmbedding` callback internally calls `execute()`,
+> the cache automatically skips on nested calls to prevent infinite recursion.
+
+## execute() Wrapper
+
+Wraps the entire lifecycle into one method:
 
 ```typescript
 const manager = new ApiKeyManager(keys, {
@@ -62,7 +92,7 @@ const result = await manager.execute(
   },
   { maxRetries: 3, timeoutMs: 10000 }
 );
-// Handles: key selection → timeout → retry → fallback → latency tracking
+// Handles: key selection → cache → timeout → retry → fallback → latency tracking
 ```
 
 ## Event Emitter
@@ -163,12 +193,13 @@ try {
 // Legacy (v1/v2)
 new ApiKeyManager(keys, storage?, strategy?)
 
-// v3 Options
+// v3+ Options
 new ApiKeyManager(keys, {
-  storage?,      // Pluggable storage { getItem, setItem }
-  strategy?,     // LoadBalancingStrategy instance
-  fallbackFn?,   // () => any — called when all keys exhausted
-  concurrency?,  // Max concurrent execute() calls
+  storage?,        // Pluggable storage { getItem, setItem }
+  strategy?,       // LoadBalancingStrategy instance
+  fallbackFn?,     // () => any — called when all keys exhausted
+  concurrency?,    // Max concurrent execute() calls
+  semanticCache?,  // v4: { threshold, ttlMs, getEmbedding }
 })
 ```
 
