@@ -1,0 +1,267 @@
+[
+  {
+    "repo": "AlterEgo-AI",
+    "filesUpdated": [
+      "functions\\index.js",
+      "functions\\keyRotationWrapper.js"
+    ],
+    "filesDeleted": [
+      "src\\services\\ApiKeyManager.ts",
+      "tests\\ApiKeyManager.test.ts"
+    ],
+    "filesBackedUp": [
+      "src\\services\\ApiKeyManager.ts.bak",
+      "tests\\ApiKeyManager.test.ts.bak"
+    ],
+    "installResult": "skipped",
+    "errors": [
+      "Skipped functions\\ApiKeyManager.js — doesn't match stale v2.0 signature"
+    ]
+  },
+  {
+    "repo": "AutoGitGrow",
+    "filesUpdated": [],
+    "filesDeleted": [
+      "src\\services\\ApiKeyManager.ts",
+      "tests\\ApiKeyManager.test.ts"
+    ],
+    "filesBackedUp": [
+      "src\\services\\ApiKeyManager.ts.bak",
+      "tests\\ApiKeyManager.test.ts.bak"
+    ],
+    "installResult": "skipped",
+    "errors": []
+  },
+  {
+    "repo": "bytebot",
+    "filesUpdated": [],
+    "filesDeleted": [
+      "src\\services\\ApiKeyManager.ts",
+      "tests\\ApiKeyManager.test.ts"
+    ],
+    "filesBackedUp": [
+      "src\\services\\ApiKeyManager.ts.bak",
+      "tests\\ApiKeyManager.test.ts.bak"
+    ],
+    "installResult": "no-package-json",
+    "errors": []
+  },
+  {
+    "repo": "DeXdo-Plan_Your_Life",
+    "filesUpdated": [],
+    "filesDeleted": [
+      "src\\services\\ApiKeyManager.ts",
+      "tests\\ApiKeyManager.test.ts"
+    ],
+    "filesBackedUp": [
+      "src\\services\\ApiKeyManager.ts.bak",
+      "tests\\ApiKeyManager.test.ts.bak"
+    ],
+    "installResult": "skipped",
+    "errors": []
+  },
+  {
+    "repo": "Goblin",
+    "filesUpdated": [],
+    "filesDeleted": [
+      "src\\services\\ApiKeyManager.ts",
+      "tests\\ApiKeyManager.test.ts"
+    ],
+    "filesBackedUp": [
+      "src\\services\\ApiKeyManager.ts.bak",
+      "tests\\ApiKeyManager.test.ts.bak"
+    ],
+    "installResult": "no-package-json",
+    "errors": []
+  },
+  {
+    "repo": "GPU-SIM",
+    "filesUpdated": [],
+    "filesDeleted": [
+      "src\\services\\ApiKeyManager.ts",
+      "tests\\ApiKeyManager.test.ts"
+    ],
+    "filesBackedUp": [
+      "src\\services\\ApiKeyManager.ts.bak",
+      "tests\\ApiKeyManager.test.ts.bak"
+    ],
+    "installResult": "no-package-json",
+    "errors": []
+  },
+  {
+    "repo": "hitori-analysis",
+    "filesUpdated": [],
+    "filesDeleted": [
+      "src\\services\\ApiKeyManager.ts",
+      "tests\\ApiKeyManager.test.ts"
+    ],
+    "filesBackedUp": [
+      "src\\services\\ApiKeyManager.ts.bak",
+      "tests\\ApiKeyManager.test.ts.bak"
+    ],
+    "installResult": "skipped",
+    "errors": []
+  },
+  {
+    "repo": "KeyDeX",
+    "filesUpdated": [],
+    "filesDeleted": [
+      "src\\services\\ApiKeyManager.ts",
+      "tests\\ApiKeyManager.test.ts"
+    ],
+    "filesBackedUp": [
+      "src\\services\\ApiKeyManager.ts.bak",
+      "tests\\ApiKeyManager.test.ts.bak"
+    ],
+    "installResult": "no-package-json",
+    "errors": []
+  },
+  {
+    "repo": "mockup-studio",
+    "filesUpdated": [
+      "screens\\SettingsScreen.tsx",
+      "services\\apiKeyManager.test.ts",
+      "services\\geminiService.ts"
+    ],
+    "filesDeleted": [
+      "services\\apiKeyManager.ts",
+      "src\\services\\ApiKeyManager.ts",
+      "tests\\ApiKeyManager.test.ts"
+    ],
+    "filesBackedUp": [
+      "services\\apiKeyManager.ts.bak",
+      "src\\services\\ApiKeyManager.ts.bak",
+      "tests\\ApiKeyManager.test.ts.bak"
+    ],
+    "installResult": "skipped",
+    "errors": []
+  },
+  {
+    "repo": "MyLife",
+    "filesUpdated": [],
+    "filesDeleted": [
+      "src\\services\\ApiKeyManager.ts",
+      "tests\\ApiKeyManager.test.ts"
+    ],
+    "filesBackedUp": [
+      "src\\services\\ApiKeyManager.ts.bak",
+      "tests\\ApiKeyManager.test.ts.bak"
+    ],
+    "installResult": "no-package-json",
+    "errors": []
+  },
+  {
+    "repo": "MyTemplates",
+    "filesUpdated": [
+      "verify_rotation.ts"
+    ],
+    "filesDeleted": [
+      "src\\services\\ApiKeyManager.ts",
+      "tests\\ApiKeyManager.test.ts"
+    ],
+    "filesBackedUp": [
+      "src\\services\\ApiKeyManager.ts.bak",
+      "tests\\ApiKeyManager.test.ts.bak"
+    ],
+    "installResult": "skipped",
+    "errors": []
+  },
+  {
+    "repo": "PhotoX",
+    "filesUpdated": [],
+    "filesDeleted": [
+      "src\\services\\ApiKeyManager.ts",
+      "tests\\ApiKeyManager.test.ts"
+    ],
+    "filesBackedUp": [
+      "src\\services\\ApiKeyManager.ts.bak",
+      "tests\\ApiKeyManager.test.ts.bak"
+    ],
+    "installResult": "no-package-json",
+    "errors": []
+  },
+  {
+    "repo": "sherlock",
+    "filesUpdated": [],
+    "filesDeleted": [
+      "src\\services\\ApiKeyManager.ts",
+      "tests\\ApiKeyManager.test.ts"
+    ],
+    "filesBackedUp": [
+      "src\\services\\ApiKeyManager.ts.bak",
+      "tests\\ApiKeyManager.test.ts.bak"
+    ],
+    "installResult": "skipped",
+    "errors": []
+  },
+  {
+    "repo": "SoundDeX",
+    "filesUpdated": [],
+    "filesDeleted": [
+      "src\\services\\ApiKeyManager.ts",
+      "tests\\ApiKeyManager.test.ts"
+    ],
+    "filesBackedUp": [
+      "src\\services\\ApiKeyManager.ts.bak",
+      "tests\\ApiKeyManager.test.ts.bak"
+    ],
+    "installResult": "no-package-json",
+    "errors": []
+  },
+  {
+    "repo": "Trending-YouTube-Scraper",
+    "filesUpdated": [],
+    "filesDeleted": [
+      "src\\services\\ApiKeyManager.ts",
+      "tests\\ApiKeyManager.test.ts"
+    ],
+    "filesBackedUp": [
+      "src\\services\\ApiKeyManager.ts.bak",
+      "tests\\ApiKeyManager.test.ts.bak"
+    ],
+    "installResult": "no-package-json",
+    "errors": []
+  },
+  {
+    "repo": "UniversityOfGoldCoast",
+    "filesUpdated": [],
+    "filesDeleted": [
+      "src\\services\\ApiKeyManager.ts",
+      "tests\\ApiKeyManager.test.ts"
+    ],
+    "filesBackedUp": [
+      "src\\services\\ApiKeyManager.ts.bak",
+      "tests\\ApiKeyManager.test.ts.bak"
+    ],
+    "installResult": "no-package-json",
+    "errors": []
+  },
+  {
+    "repo": "VisualNoteX",
+    "filesUpdated": [],
+    "filesDeleted": [
+      "src\\services\\ApiKeyManager.ts",
+      "tests\\ApiKeyManager.test.ts"
+    ],
+    "filesBackedUp": [
+      "src\\services\\ApiKeyManager.ts.bak",
+      "tests\\ApiKeyManager.test.ts.bak"
+    ],
+    "installResult": "skipped",
+    "errors": []
+  },
+  {
+    "repo": "Whatsapp-Marketing-Android-App",
+    "filesUpdated": [],
+    "filesDeleted": [
+      "src\\services\\ApiKeyManager.ts",
+      "tests\\ApiKeyManager.test.ts"
+    ],
+    "filesBackedUp": [
+      "src\\services\\ApiKeyManager.ts.bak",
+      "tests\\ApiKeyManager.test.ts.bak"
+    ],
+    "installResult": "no-package-json",
+    "errors": []
+  }
+]
