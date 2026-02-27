@@ -5,3 +5,5 @@ dist/
 .env
 node_modules
 test_output_multi.txt
+*.log
+*.bak
