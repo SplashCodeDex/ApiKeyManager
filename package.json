@@ -1,9 +1,75 @@
 {
     "name": "@splashcodex/api-key-manager",
-    "version": "4.1.0",
-    "description": "Universal API Key Rotation System for rate-limited APIs",
+    "version": "5.0.0",
+    "description": "Universal API Key Management Gateway with provider presets, persistence, and multi-provider vault",
     "main": "dist/index.js",
     "types": "dist/index.d.ts",
+    "exports": {
+        ".": {
+            "require": "./dist/index.js",
+            "types": "./dist/index.d.ts"
+        },
+        "./presets": {
+            "require": "./dist/presets/index.js",
+            "types": "./dist/presets/index.d.ts"
+        },
+        "./presets/gemini": {
+            "require": "./dist/presets/gemini.js",
+            "types": "./dist/presets/gemini.d.ts"
+        },
+        "./presets/openai": {
+            "require": "./dist/presets/openai.js",
+            "types": "./dist/presets/openai.d.ts"
+        },
+        "./presets/multi": {
+            "require": "./dist/presets/multi.js",
+            "types": "./dist/presets/multi.d.ts"
+        },
+        "./presets/base": {
+            "require": "./dist/presets/base.js",
+            "types": "./dist/presets/base.d.ts"
+        },
+        "./persistence": {
+            "require": "./dist/persistence/index.js",
+            "types": "./dist/persistence/index.d.ts"
+        },
+        "./persistence/file": {
+            "require": "./dist/persistence/file.js",
+            "types": "./dist/persistence/file.d.ts"
+        },
+        "./persistence/memory": {
+            "require": "./dist/persistence/memory.js",
+            "types": "./dist/persistence/memory.d.ts"
+        }
+    },
+    "typesVersions": {
+        "*": {
+            "presets": [
+                "dist/presets/index.d.ts"
+            ],
+            "presets/gemini": [
+                "dist/presets/gemini.d.ts"
+            ],
+            "presets/openai": [
+                "dist/presets/openai.d.ts"
+            ],
+            "presets/multi": [
+                "dist/presets/multi.d.ts"
+            ],
+            "presets/base": [
+                "dist/presets/base.d.ts"
+            ],
+            "persistence": [
+                "dist/persistence/index.d.ts"
+            ],
+            "persistence/file": [
+                "dist/persistence/file.d.ts"
+            ],
+            "persistence/memory": [
+                "dist/persistence/memory.d.ts"
+            ]
+        }
+    },
     "files": [
         "dist",
         "src"
@@ -18,6 +84,7 @@
         "key",
         "rotation",
         "gemini",
+        "openai",
         "rate-limit",
         "circuit-breaker",
         "resilience",
@@ -25,7 +92,12 @@
         "timeout",
         "retry",
         "gateway",
-        "load-balancing"
+        "load-balancing",
+        "preset",
+        "persistence",
+        "multi-provider",
+        "semantic-cache",
+        "streaming"
     ],
     "author": "Antigravity",
     "license": "ISC",

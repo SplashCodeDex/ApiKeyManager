@@ -83,5 +83,22 @@ describe('ApiKeyManager v2.0 Strategies', () => {
             const key = manager.getKey();
             expect(key).toBe('key2');
         });
+
+        it('should tie-break using LRU when latencies are equal', () => {
+            const manager = new ApiKeyManager(['key1', 'key2'], mockStorage, new LatencyStrategy());
+
+            // Both have 0 latency. Use key1.
+            const k1 = manager.getKey();
+            expect(k1).toBe('key1');
+
+            // Mark success for both with same latency
+            manager.markSuccess('key1', 100);
+            manager.markSuccess('key2', 100);
+
+            // Now both have 100ms latency.
+            // key2 should be picked because key1 was used more recently.
+            const k2 = manager.getKey();
+            expect(k2).toBe('key2');
+        });
     });
 });

@@ -1,12 +1,30 @@
 /**
- * Universal ApiKeyManager v4.0 — Mastermind Edition
+ * Universal ApiKeyManager v5.0 — Ecosystem Edition
  * Implements: Rotation, Circuit Breaker, Persistence, Exponential Backoff, Strategies,
  *             Event Emitter, Fallback, execute(), Timeout, Auto-Retry, Provider Tags,
  *             Health Checks, Bulkhead/Concurrency
+ * NEW in v5.0: Provider Presets (GeminiManager, OpenAIManager, MultiManager),
+ *              Built-in Persistence (FileStorage, MemoryStorage)
  * Gemini-Specific: finishReason handling, Safety blocks, RECITATION detection
  */
 
 import { EventEmitter } from 'events';
+
+// ─── Re-exports: Persistence ─────────────────────────────────────────────────
+// Persistence adapters can be imported from root or via subpath
+export { FileStorage } from './persistence/file';
+export type { FileStorageOptions } from './persistence/file';
+export { MemoryStorage } from './persistence/memory';
+
+// ─── Presets ─────────────────────────────────────────────────────────────────
+// Presets are available via subpath imports to avoid circular dependencies:
+//   import { GeminiManager } from '@splashcodex/api-key-manager/presets/gemini';
+//   import { OpenAIManager } from '@splashcodex/api-key-manager/presets/openai';
+//   import { MultiManager } from '@splashcodex/api-key-manager/presets/multi';
+// Or import all at once:
+//   import { GeminiManager, OpenAIManager, MultiManager } from '@splashcodex/api-key-manager/presets';
+
+
 
 // ─── Interfaces & Types ──────────────────────────────────────────────────────
 
@@ -185,12 +203,15 @@ export class WeightedStrategy implements LoadBalancingStrategy {
 }
 
 /**
- * Latency Strategy: Pick lowest average latency
+ * Latency Strategy: Pick lowest average latency with LRU tie-break
  */
 export class LatencyStrategy implements LoadBalancingStrategy {
     next(candidates: KeyState[]): KeyState | null {
         if (candidates.length === 0) return null;
-        candidates.sort((a, b) => a.averageLatency - b.averageLatency);
+        candidates.sort((a, b) => {
+            if (a.averageLatency !== b.averageLatency) return a.averageLatency - b.averageLatency;
+            return a.lastUsed - b.lastUsed; // LRU tie-break
+        });
         return candidates[0];
     }
 }
