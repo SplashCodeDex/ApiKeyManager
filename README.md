@@ -30,6 +30,13 @@
 npm install @splashcodex/api-key-manager
 ```
 
+### 🚀 Auto-Scaffold (New!)
+The fastest way to get started is to run the `init` command in your project directory:
+```bash
+npx @splashcodex/api-key-manager init
+```
+This will automatically create a `.env` template and a `demo.ts` file showing the Gemini Preset in action.
+
 ## Quick Start (v5 Presets)
 
 The fastest way to get started in any CodeDex repository.

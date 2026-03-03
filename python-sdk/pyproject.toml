@@ -1,13 +1,36 @@
 [project]
 name = "splashcodex-api-manager"
-version = "5.0.0"
-description = "Python port of the SplashCodeDex API Key Manager"
+version = "5.0.2"
+description = "Universal API Key Management Gateway with Provider Presets, Built-in Persistence, and Multi-Provider Vault."
 readme = "README.md"
 requires-python = ">=3.9"
+authors = [
+  { name = "Adema", email = "codex@splashcodex.com" }
+]
+license = { text = "ISC" }
+keywords = ["api", "key manager", "gemini", "openai", "circuit breaker", "load balancer"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: ISC License (ISCL)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
 dependencies = [
     "pydantic>=2.0.0",
     "loguru>=0.7.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/splashcodex/codedex-api-manager"
+Repository = "https://github.com/splashcodex/codedex-api-manager.git"
+
+[project.scripts]
+splashcodex-api-manager = "splashcodex_api_manager.__main__:main"
+api-key-manager = "splashcodex_api_manager.__main__:main"
 
 [project.optional-dependencies]
 dev = [
