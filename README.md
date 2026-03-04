@@ -11,6 +11,7 @@
 - **Built-in Persistence** — `FileStorage` (survives restarts) and `MemoryStorage` included.
 - **Singleton Pattern** — Thread-safe singletons with `getInstance()` and `Result<T>` pattern.
 - **Multi-Provider Vault** — Manage multiple providers (`gemini`, `openai`, `anthropic`) from a single entry point.
+- **Centralized API Gateway** — Built-in Fastify proxy server to centralize AI requests for multiple apps securely.
 
 ## Features
 
@@ -57,8 +58,34 @@ const response = await gemini.execute(async (key) => {
 });
 ```
 
+### Centralized API Gateway (New!)
+
+Run a standalone proxy server that acts as a single point of entry for all your microservices or repositories. It centralizes key management, circuit breaking, and rate limiting across applications.
+
+1. Install global/local and export your keys:
+```bash
+export GOOGLE_GEMINI_API_KEY="AIzaSy...1,AIzaSy...2"
+```
+
+2. Start the gateway:
+```bash
+npm run gateway
+# Server runs on http://localhost:9000
+```
+
+3. Call the proxy from ANY language without managing keys in the client app:
+```bash
+curl -X POST http://localhost:9000/v1/generate \
+  -H "Content-Type: application/json" \
+  -d '{"provider": "gemini", "prompt": "Hello!"}'
+```
+Route supports both `/v1/generate` (Standard JSON) and `/v1/stream` (Server-Sent Events). Monitoring available at `/v1/health` and `/v1/providers`.
+
+---
+
 ### Multi-Provider Vault
-Perfect for gateways or complex bots handling multiple models.
+
+Manage ALL your provider keys across your system from one pool.Perfect for gateways or complex bots handling multiple models.
 
 ```typescript
 import { MultiManager } from '@splashcodex/api-key-manager/presets/multi';
