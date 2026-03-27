@@ -1,7 +1,7 @@
 {
     "name": "@splashcodex/api-key-manager",
-    "version": "5.0.2",
-    "description": "Universal API Key Management Gateway with provider presets, persistence, and multi-provider vault",
+    "version": "5.1.0",
+    "description": "Universal API Key Management Gateway with centralized env loader, provider presets, persistence, and multi-provider vault",
     "bin": {
         "api-key-manager": "./bin/cli.js"
     },
@@ -9,44 +9,61 @@
     "types": "dist/index.d.ts",
     "exports": {
         ".": {
+            "import": "./dist/index.js",
             "require": "./dist/index.js",
             "types": "./dist/index.d.ts"
         },
+        "./env": {
+            "import": "./dist/env/index.js",
+            "require": "./dist/env/index.js",
+            "types": "./dist/env/index.d.ts"
+        },
         "./presets": {
+            "import": "./dist/presets/index.js",
             "require": "./dist/presets/index.js",
             "types": "./dist/presets/index.d.ts"
         },
         "./presets/gemini": {
+            "import": "./dist/presets/gemini.js",
             "require": "./dist/presets/gemini.js",
             "types": "./dist/presets/gemini.d.ts"
         },
         "./presets/openai": {
+            "import": "./dist/presets/openai.js",
             "require": "./dist/presets/openai.js",
             "types": "./dist/presets/openai.d.ts"
         },
         "./presets/multi": {
+            "import": "./dist/presets/multi.js",
             "require": "./dist/presets/multi.js",
             "types": "./dist/presets/multi.d.ts"
         },
         "./presets/base": {
+            "import": "./dist/presets/base.js",
             "require": "./dist/presets/base.js",
             "types": "./dist/presets/base.d.ts"
         },
         "./persistence": {
+            "import": "./dist/persistence/index.js",
             "require": "./dist/persistence/index.js",
             "types": "./dist/persistence/index.d.ts"
         },
         "./persistence/file": {
+            "import": "./dist/persistence/file.js",
             "require": "./dist/persistence/file.js",
             "types": "./dist/persistence/file.d.ts"
         },
         "./persistence/memory": {
+            "import": "./dist/persistence/memory.js",
             "require": "./dist/persistence/memory.js",
             "types": "./dist/persistence/memory.d.ts"
         }
     },
     "typesVersions": {
         "*": {
+            "env": [
+                "dist/env/index.d.ts"
+            ],
             "presets": [
                 "dist/presets/index.d.ts"
             ],
@@ -82,7 +99,7 @@
         "build": "tsc",
         "test": "jest --verbose",
         "prepublishOnly": "npm run build",
-        "postinstall": "node -e \"console.log('\\n\\x1b[32m🌟 Successfully installed @splashcodex/api-key-manager v5.0!\\x1b[0m\\n\\x1b[36m📚 Documentation: https://www.npmjs.com/package/@splashcodex/ApiKeyManager\\x1b[0m\\n\\x1b[33m🚀 Quick Start:\\x1b[0m\\n   import { GeminiManager } from \\'@splashcodex/api-key-manager/presets/gemini\\';\\n   const gemini = GeminiManager.getInstance().data;\\n')\"",
+        "postinstall": "node -e \"console.log('\\n\\x1b[32m🌟 Successfully installed @splashcodex/api-key-manager v5.1!\\x1b[0m\\n\\x1b[36m📚 Documentation: https://www.npmjs.com/package/@splashcodex/ApiKeyManager\\x1b[0m\\n\\x1b[33m🚀 Quick Start:\\x1b[0m\\n   import { loadCentralEnv } from \\'@splashcodex/api-key-manager/env\\';\\n   import { GeminiManager } from \\'@splashcodex/api-key-manager/presets/gemini\\';\\n   loadCentralEnv();\\n   const gemini = GeminiManager.getInstance().data;\\n')\"",
         "gateway": "ts-node gateway/server.ts",
         "gateway:dev": "npx nodemon --watch gateway/ --ext ts --exec ts-node gateway/server.ts"
     },
@@ -104,7 +121,10 @@
         "persistence",
         "multi-provider",
         "semantic-cache",
-        "streaming"
+        "streaming",
+        "env",
+        "centralized",
+        "dotenv"
     ],
     "author": "Antigravity",
     "license": "ISC",

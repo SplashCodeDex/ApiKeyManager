@@ -20,8 +20,9 @@ import {
     LoadBalancingStrategy,
 } from '../index';
 import { FileStorage } from '../persistence/file';
-import { join } from 'path';
-import { tmpdir } from 'os';
+import { join, basename } from 'path';
+import { tmpdir, homedir } from 'os';
+import { createHash } from 'crypto';
 
 // ─── Result Type ─────────────────────────────────────────────────────────────
 
@@ -64,6 +65,24 @@ export interface PresetLogger {
     error(message: string, ...args: any[]): void;
 }
 
+// ─── Project Identifier ─────────────────────────────────────────────────────
+
+/**
+ * Derive a short, stable identifier for the current project.
+ * Uses the directory name + a hash of the full CWD to avoid collisions
+ * when multiple projects run simultaneously.
+ *
+ * Examples:
+ *   /home/codedex/projects/WhatsDeX  → "whatsdex_a3f2"
+ *   /home/codedex/projects/DeXdo     → "dexdo_b7c1"
+ */
+function getProjectId(): string {
+    const cwd = process.cwd();
+    const dirName = basename(cwd).toLowerCase().replace(/[^a-z0-9]/g, '');
+    const hash = createHash('md5').update(cwd).digest('hex').slice(0, 4);
+    return `${dirName}_${hash}`;
+}
+
 // ─── Base Preset Class ──────────────────────────────────────────────────────
 
 /**
@@ -101,12 +120,13 @@ export abstract class BasePreset {
             ...options,
         };
 
+        const projectId = getProjectId();
         const stateFile = this.options.stateFilePath ||
-            join(tmpdir(), `codedex_${this.options.provider}_state.json`);
+            join(tmpdir(), `codedex_${this.options.provider}_${projectId}_state.json`);
 
         const storage = new FileStorage({
             filePath: stateFile,
-            clearOnInit: true, // Fresh start each session to clear stale DEAD keys
+            clearOnInit: false, // Preserve circuit breaker state across restarts
         });
 
         this.manager = new ApiKeyManager(apiKeys, {
@@ -280,12 +300,13 @@ export abstract class BasePreset {
         const keys = BasePreset.parseKeysFromEnv(envKeys);
 
         if (keys.length === 0) {
-            const logger = mergedOptions.logger || console;
-            logger.warn(
-                `[${instanceKey}] No API keys found in env vars: ${envKeys.join(', ')}. ` +
-                `AI features will be disabled.`
-            );
-            // Still create the instance with empty keys — allows graceful degradation
+            return {
+                success: false,
+                error: new Error(
+                    `[${instanceKey}] No API keys found in env vars: ${envKeys.join(', ')}. ` +
+                    `Set these environment variables or use loadCentralEnv() to load from ~/codedex/env/ first.`
+                ),
+            };
         }
 
         try {

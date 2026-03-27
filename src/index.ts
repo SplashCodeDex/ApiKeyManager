@@ -126,6 +126,7 @@ const CONFIG = {
     HALF_OPEN_TEST_DELAY: 60 * 1000,      // 1 minute after open
     MAX_BACKOFF: 64 * 1000,               // 64 seconds max
     BASE_BACKOFF: 1000,                   // 1 second base
+    DEAD_KEY_TTL: 60 * 60 * 1000,        // 1 hour — DEAD keys get retested after this
 };
 
 // Error classification patterns
@@ -305,6 +306,10 @@ export class ApiKeyManager extends EventEmitter {
     // Health check state
     private healthCheckFn?: (key: string) => Promise<boolean>;
     private healthCheckInterval?: ReturnType<typeof setInterval>;
+
+    // Debounced persistence — avoids writeFileSync on every single call
+    private _saveTimer?: ReturnType<typeof setTimeout>;
+    private _saveDirty: boolean = false;
 
     // Semantic Cache v4
     private semanticCache?: SemanticCache;
@@ -939,6 +944,8 @@ export class ApiKeyManager extends EventEmitter {
             clearInterval(this.healthCheckInterval);
             this.healthCheckInterval = undefined;
         }
+        // Flush any pending state to disk on shutdown
+        this._flushState();
     }
 
     private async _runHealthChecks() {
@@ -966,8 +973,41 @@ export class ApiKeyManager extends EventEmitter {
 
     // ─── Persistence ─────────────────────────────────────────────────────────
 
+    /**
+     * Debounced save — marks state as dirty and flushes after 500ms of inactivity.
+     * Under heavy load (multiple getKey/markSuccess/markFailed calls), this coalesces
+     * dozens of writeFileSync calls into one.
+     */
     private saveState() {
         if (!this.storage) return;
+        this._saveDirty = true;
+
+        if (!this._saveTimer) {
+            this._saveTimer = setTimeout(() => {
+                this._flushState();
+                this._saveTimer = undefined;
+            }, 500);
+            if (this._saveTimer.unref) this._saveTimer.unref();
+        }
+    }
+
+    /**
+     * Immediately flush state to storage. Called by the debounce timer
+     * and by stopHealthChecks() to ensure clean shutdown.
+     */
+    public flushState() {
+        this._flushState();
+    }
+
+    private _flushState() {
+        if (!this._saveDirty || !this.storage) return;
+        this._saveDirty = false;
+
+        if (this._saveTimer) {
+            clearTimeout(this._saveTimer);
+            this._saveTimer = undefined;
+        }
+
         const state = this.keys.reduce((acc, k) => ({
             ...acc,
             [k.key]: {
@@ -995,8 +1035,34 @@ export class ApiKeyManager extends EventEmitter {
             const raw = this.storage.getItem(this.storageKey);
             if (!raw) return;
             const data = JSON.parse(raw);
+            const now = Date.now();
+
             this.keys.forEach(k => {
-                if (data[k.key]) Object.assign(k, data[k.key]);
+                if (!data[k.key]) return;
+                Object.assign(k, data[k.key]);
+
+                // Resurrect DEAD keys that have exceeded the TTL.
+                // This allows keys that were marked dead (e.g., temporary 403)
+                // to be retested after a cooldown period instead of staying dead forever.
+                if (k.circuitState === 'DEAD' && k.failedAt) {
+                    const deadDuration = now - k.failedAt;
+                    if (deadDuration >= CONFIG.DEAD_KEY_TTL) {
+                        k.circuitState = 'HALF_OPEN';
+                        k.halfOpenTestTime = null; // Allow immediate test
+                        k.failCount = 0;
+                    }
+                }
+
+                // Clear stale cooldowns from previous sessions.
+                // If a key was cooling down and the process restarted after the
+                // cooldown would have expired, reset it to CLOSED.
+                if (k.circuitState === 'OPEN' && k.failedAt) {
+                    const cooldown = k.customCooldown || (k.isQuotaError ? CONFIG.COOLDOWN_QUOTA : CONFIG.COOLDOWN_TRANSIENT);
+                    if (now - k.failedAt >= cooldown) {
+                        k.circuitState = 'HALF_OPEN';
+                        k.halfOpenTestTime = null;
+                    }
+                }
             });
         } catch (e) {
             console.error("Failed to load key state");

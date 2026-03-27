@@ -11,12 +11,19 @@
  *   npx ts-node gateway/server.ts
  */
 
+import { loadCentralEnv } from '../src/env';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import { MultiManager } from '../src/presets/multi';
 import { loadConfig, ProviderDefinition } from './config';
 import { createProxyFn, createStreamProxyFn, ProxyRequest } from './proxy';
 import { getAppId, sendError, log } from './middleware';
+
+// ─── Load centralized env FIRST (before anything reads process.env) ─────────
+const envResult = loadCentralEnv();
+if (envResult.loaded) {
+    console.log(`\x1b[36m[env]\x1b[0m Loaded ${envResult.varsSet} vars from ${envResult.filesLoaded.join(', ')}`);
+}
 
 const config = loadConfig();
 
