@@ -13,6 +13,7 @@
 
 import { GeminiManager } from '../src/presets/gemini';
 import { OpenAIManager } from '../src/presets/openai';
+import { AnthropicManager } from '../src/presets/anthropic';
 import { MultiManager } from '../src/presets/multi';
 import { BasePreset } from '../src/presets/base';
 import { FileStorage } from '../src/persistence/file';
@@ -286,6 +287,57 @@ describe('OpenAIManager', () => {
         });
 
         expect(response).toEqual({ model: 'gpt-4o', message: 'Hello!' });
+    });
+});
+
+// ─── AnthropicManager Preset Tests ──────────────────────────────────────────
+
+describe('AnthropicManager', () => {
+    const ORIGINAL_ENV = process.env;
+
+    beforeEach(() => {
+        process.env = { ...ORIGINAL_ENV };
+        AnthropicManager.reset();
+        BasePreset.resetAll();
+    });
+
+    afterAll(() => {
+        process.env = ORIGINAL_ENV;
+        AnthropicManager.reset();
+        BasePreset.resetAll();
+    });
+
+    test('getInstance reads ANTHROPIC_API_KEY', () => {
+        process.env.ANTHROPIC_API_KEY = 'sk-ant-test-key';
+
+        const result = AnthropicManager.getInstance();
+        expect(result.success).toBe(true);
+        if (result.success) {
+            expect(result.data.getKeyCount()).toBe(1);
+            expect(result.data.getKey()).toBe('sk-ant-test-key');
+        }
+    });
+
+    test('execute works with Anthropic key', async () => {
+        process.env.ANTHROPIC_API_KEY = 'sk-ant-exec-test';
+
+        const result = AnthropicManager.getInstance();
+        expect(result.success).toBe(true);
+        if (!result.success) return;
+
+        const response = await result.data.execute(async (key) => {
+            expect(key).toBe('sk-ant-exec-test');
+            return { model: 'claude-sonnet-4-20250514', content: 'Hello from Claude!' };
+        });
+
+        expect(response).toEqual({ model: 'claude-sonnet-4-20250514', content: 'Hello from Claude!' });
+    });
+
+    test('getInstance returns failure with no keys', () => {
+        delete process.env.ANTHROPIC_API_KEY;
+
+        const result = AnthropicManager.getInstance();
+        expect(result.success).toBe(false);
     });
 });
 
