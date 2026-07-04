@@ -21,7 +21,8 @@ import {
 } from '../index';
 import { FileStorage } from '../persistence/file';
 import { join } from 'path';
-import { tmpdir } from 'os';
+import { tmpdir, homedir } from 'os';
+import { readFileSync, existsSync } from 'fs';
 
 // ─── Result Type ─────────────────────────────────────────────────────────────
 
@@ -253,6 +254,40 @@ export abstract class BasePreset {
         return [...new Set(keys)]; // Deduplicate
     }
 
+    protected static getConfigPath(): string {
+        return join(homedir(), '.codedex', 'api_keys.json');
+    }
+
+    /**
+     * Parse API keys from ~/.codedex/api_keys.json
+     * Format should be: { "ENV_VAR_NAME": "key1,key2" } or { "ENV_VAR_NAME": ["key1", "key2"] }
+     */
+    protected static parseKeysFromHomeDir(envKeys: string[]): string[] {
+        const configPath = this.getConfigPath();
+        
+        if (!existsSync(configPath)) return [];
+
+        try {
+            const fileContent = readFileSync(configPath, 'utf-8');
+            const parsed = JSON.parse(fileContent);
+            const keys: string[] = [];
+
+            for (const envName of envKeys) {
+                const value = parsed[envName];
+                if (!value) continue;
+                
+                if (Array.isArray(value)) {
+                    keys.push(...value.filter((k: any) => typeof k === 'string' && k.trim()));
+                } else if (typeof value === 'string' && value.trim()) {
+                    keys.push(...value.split(',').map(k => k.trim()).filter(k => k.length > 0));
+                }
+            }
+            return [...new Set(keys)];
+        } catch (err) {
+            return [];
+        }
+    }
+
     /**
      * Get or create the singleton instance for a preset.
      * This is the core factory used by all preset subclasses.
@@ -277,7 +312,11 @@ export abstract class BasePreset {
 
         // Parse keys
         const envKeys = mergedOptions.envKeys || [];
-        const keys = BasePreset.parseKeysFromEnv(envKeys);
+        let keys = BasePreset.parseKeysFromEnv(envKeys);
+
+        if (keys.length === 0) {
+            keys = BasePreset.parseKeysFromHomeDir(envKeys);
+        }
 
         if (keys.length === 0) {
             const logger = mergedOptions.logger || console;

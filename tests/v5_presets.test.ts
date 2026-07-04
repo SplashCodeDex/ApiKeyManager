@@ -93,6 +93,57 @@ describe('FileStorage', () => {
     });
 });
 
+// ─── BasePreset $HOME Centralization Tests ───────────────────────────────────
+
+describe('BasePreset $HOME centralization', () => {
+    let mockHome: string;
+    let configPath: string;
+
+    beforeEach(() => {
+        mockHome = fs.mkdtempSync(path.join(os.tmpdir(), 'codedex-home-'));
+        configPath = path.join(mockHome, 'api_keys.json');
+        
+        // Mock getConfigPath to point to our temp file
+        jest.spyOn(BasePreset as any, 'getConfigPath').mockReturnValue(configPath);
+        
+        GeminiManager.reset();
+        BasePreset.resetAll();
+        delete process.env.GOOGLE_GEMINI_API_KEY;
+        delete process.env.GEMINI_API_KEY;
+    });
+
+    afterEach(() => {
+        jest.restoreAllMocks();
+        try { fs.rmSync(mockHome, { recursive: true, force: true }); } catch {}
+    });
+
+    test('getInstance falls back to ~/.codedex/api_keys.json when env is empty', () => {
+        fs.writeFileSync(configPath, JSON.stringify({
+            'GOOGLE_GEMINI_API_KEY': ['home-key-1', 'home-key-2']
+        }));
+
+        const result = GeminiManager.getInstance();
+        expect(result.success).toBe(true);
+        if (result.success) {
+            expect(result.data.getKeyCount()).toBe(2);
+        }
+    });
+    
+    test('getInstance ignores ~/.codedex/api_keys.json if env has keys', () => {
+        process.env.GOOGLE_GEMINI_API_KEY = 'env-key-1';
+        fs.writeFileSync(configPath, JSON.stringify({
+            'GOOGLE_GEMINI_API_KEY': ['home-key-1', 'home-key-2']
+        }));
+
+        const result = GeminiManager.getInstance();
+        expect(result.success).toBe(true);
+        if (result.success) {
+            expect(result.data.getKeyCount()).toBe(1);
+            expect(result.data.getKey()).toBe('env-key-1');
+        }
+    });
+});
+
 // ─── GeminiManager Preset Tests ─────────────────────────────────────────────
 
 describe('GeminiManager', () => {
