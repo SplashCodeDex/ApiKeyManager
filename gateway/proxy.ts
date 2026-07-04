@@ -66,6 +66,19 @@ function buildRequestBody(provider: ProviderDefinition, req: ProxyRequest): any 
         return body;
     }
 
+    if (provider.name === 'anthropic') {
+        const body: any = {
+            model: req.model,
+            max_tokens: req.maxTokens || 1024,
+            messages: [{ role: 'user', content: req.prompt }],
+        };
+        if (req.systemInstruction) {
+            body.system = req.systemInstruction;
+        }
+        if (req.temperature !== undefined) body.temperature = req.temperature;
+        return body;
+    }
+
     // Generic fallback
     return { prompt: req.prompt };
 }
@@ -106,6 +119,22 @@ function parseResponse(provider: ProviderDefinition, data: any, req: ProxyReques
         };
     }
 
+    if (provider.name === 'anthropic') {
+        const text = data?.content?.[0]?.text || '';
+        return {
+            success: true,
+            provider: provider.name,
+            model: req.model,
+            result: text,
+            latencyMs,
+            usage: {
+                promptTokens: data?.usage?.input_tokens,
+                completionTokens: data?.usage?.output_tokens,
+                totalTokens: (data?.usage?.input_tokens || 0) + (data?.usage?.output_tokens || 0),
+            },
+        };
+    }
+
     return { success: true, provider: provider.name, model: req.model, result: JSON.stringify(data), latencyMs };
 }
 
@@ -132,6 +161,11 @@ export function createProxyFn(
             url += `${url.includes('?') ? '&' : '?'}${providerDef.authKey}=${key}`;
         } else {
             headers[providerDef.authKey] = `${providerDef.authPrefix || ''}${key}`;
+        }
+
+        // Anthropic requires a version header on all requests
+        if (providerDef.name === 'anthropic') {
+            headers['anthropic-version'] = '2023-06-01';
         }
 
         const body = buildRequestBody(providerDef, req);
@@ -183,8 +217,16 @@ export function createStreamProxyFn(
             headers[providerDef.authKey] = `${providerDef.authPrefix || ''}${key}`;
         }
 
+        // Anthropic requires a version header
+        if (providerDef.name === 'anthropic') {
+            headers['anthropic-version'] = '2023-06-01';
+        }
+
         const body = buildRequestBody(providerDef, req);
         if (providerDef.name === 'openai') {
+            body.stream = true;
+        }
+        if (providerDef.name === 'anthropic') {
             body.stream = true;
         }
 
@@ -225,6 +267,11 @@ export function createStreamProxyFn(
                                 text = parsed?.candidates?.[0]?.content?.parts?.[0]?.text || '';
                             } else if (providerDef.name === 'openai') {
                                 text = parsed?.choices?.[0]?.delta?.content || '';
+                            } else if (providerDef.name === 'anthropic') {
+                                // Anthropic streams content_block_delta events
+                                if (parsed?.type === 'content_block_delta') {
+                                    text = parsed?.delta?.text || '';
+                                }
                             }
                             if (text) yield text;
                         } catch {

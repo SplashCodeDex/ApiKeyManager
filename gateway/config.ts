@@ -23,7 +23,6 @@ export interface GatewayConfig {
 
 /**
  * Built-in provider definitions.
- * Extend this to add Anthropic, Mistral, etc.
  */
 const PROVIDERS: ProviderDefinition[] = [
     {
@@ -51,6 +50,18 @@ const PROVIDERS: ProviderDefinition[] = [
         authStyle: 'header',
         authKey: 'Authorization',
         authPrefix: 'Bearer ',
+    },
+    {
+        name: 'anthropic',
+        envKeys: ['ANTHROPIC_API_KEY'],
+        baseUrl: 'https://api.anthropic.com/v1',
+        models: {
+            'claude-sonnet-4-20250514': '/messages',
+            'claude-haiku-4-5-20251001': '/messages',
+            'claude-opus-4-6': '/messages',
+        },
+        authStyle: 'header',
+        authKey: 'x-api-key',
     },
 ];
 

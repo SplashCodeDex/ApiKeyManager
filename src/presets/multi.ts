@@ -42,8 +42,16 @@ import {
     ApiKeyManagerOptions,
 } from '../index';
 import { FileStorage } from '../persistence/file';
-import { join } from 'path';
+import { join, basename } from 'path';
 import { tmpdir } from 'os';
+import { createHash } from 'crypto';
+
+function getProjectId(): string {
+    const cwd = process.cwd();
+    const dirName = basename(cwd).toLowerCase().replace(/[^a-z0-9]/g, '');
+    const hash = createHash('md5').update(cwd).digest('hex').slice(0, 4);
+    return `${dirName}_${hash}`;
+}
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -90,12 +98,14 @@ export class MultiManager {
             const keys = MultiManager.parseKeysFromEnv(config.envKeys);
 
             if (keys.length === 0) {
-                this.logger.warn(`[MultiManager:${providerName}] No API keys found in: ${config.envKeys.join(', ')}`);
+                this.logger.warn(`[MultiManager:${providerName}] No API keys found in: ${config.envKeys.join(', ')} — provider skipped`);
+                continue;
             }
 
+            const projectId = getProjectId();
             const storage = new FileStorage({
-                filePath: join(tmpdir(), `codedex_multi_${providerName}_state.json`),
-                clearOnInit: true,
+                filePath: join(tmpdir(), `codedex_multi_${providerName}_${projectId}_state.json`),
+                clearOnInit: false, // Preserve circuit breaker state across restarts
             });
 
             const manager = new ApiKeyManager(keys, {

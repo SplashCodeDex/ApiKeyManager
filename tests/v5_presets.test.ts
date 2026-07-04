@@ -13,6 +13,7 @@
 
 import { GeminiManager } from '../src/presets/gemini';
 import { OpenAIManager } from '../src/presets/openai';
+import { AnthropicManager } from '../src/presets/anthropic';
 import { MultiManager } from '../src/presets/multi';
 import { BasePreset } from '../src/presets/base';
 import { FileStorage } from '../src/persistence/file';
@@ -192,16 +193,15 @@ describe('GeminiManager', () => {
         }
     });
 
-    test('getInstance returns success with 0 keys (graceful degradation)', () => {
+    test('getInstance returns failure with 0 keys (fail fast)', () => {
         // No env var set
         delete process.env.GOOGLE_GEMINI_API_KEY;
         delete process.env.GEMINI_API_KEY;
 
         const result = GeminiManager.getInstance();
-        expect(result.success).toBe(true);
-        if (result.success) {
-            expect(result.data.getKeyCount()).toBe(0);
-            expect(result.data.getKey()).toBeNull();
+        expect(result.success).toBe(false);
+        if (!result.success) {
+            expect(result.error.message).toContain('No API keys found');
         }
     });
 
@@ -338,6 +338,57 @@ describe('OpenAIManager', () => {
         });
 
         expect(response).toEqual({ model: 'gpt-4o', message: 'Hello!' });
+    });
+});
+
+// ─── AnthropicManager Preset Tests ──────────────────────────────────────────
+
+describe('AnthropicManager', () => {
+    const ORIGINAL_ENV = process.env;
+
+    beforeEach(() => {
+        process.env = { ...ORIGINAL_ENV };
+        AnthropicManager.reset();
+        BasePreset.resetAll();
+    });
+
+    afterAll(() => {
+        process.env = ORIGINAL_ENV;
+        AnthropicManager.reset();
+        BasePreset.resetAll();
+    });
+
+    test('getInstance reads ANTHROPIC_API_KEY', () => {
+        process.env.ANTHROPIC_API_KEY = 'sk-ant-test-key';
+
+        const result = AnthropicManager.getInstance();
+        expect(result.success).toBe(true);
+        if (result.success) {
+            expect(result.data.getKeyCount()).toBe(1);
+            expect(result.data.getKey()).toBe('sk-ant-test-key');
+        }
+    });
+
+    test('execute works with Anthropic key', async () => {
+        process.env.ANTHROPIC_API_KEY = 'sk-ant-exec-test';
+
+        const result = AnthropicManager.getInstance();
+        expect(result.success).toBe(true);
+        if (!result.success) return;
+
+        const response = await result.data.execute(async (key) => {
+            expect(key).toBe('sk-ant-exec-test');
+            return { model: 'claude-sonnet-4-20250514', content: 'Hello from Claude!' };
+        });
+
+        expect(response).toEqual({ model: 'claude-sonnet-4-20250514', content: 'Hello from Claude!' });
+    });
+
+    test('getInstance returns failure with no keys', () => {
+        delete process.env.ANTHROPIC_API_KEY;
+
+        const result = AnthropicManager.getInstance();
+        expect(result.success).toBe(false);
     });
 });
 
@@ -498,7 +549,7 @@ describe('Preset + FileStorage Integration', () => {
         BasePreset.resetAll();
     });
 
-    test('GeminiManager creates a state file in tmpdir', async () => {
+    test('GeminiManager creates a state file in tmpdir with project identifier', async () => {
         process.env.GOOGLE_GEMINI_API_KEY = 'persist-test-key';
         const result = GeminiManager.getInstance();
         expect(result.success).toBe(true);
@@ -506,12 +557,17 @@ describe('Preset + FileStorage Integration', () => {
 
         // Execute a call to trigger state save
         await result.data.execute(async (key) => 'ok');
+        // Flush debounced state immediately
+        result.data.getManager().flushState();
 
-        // Verify state file exists
-        const stateFile = path.join(os.tmpdir(), 'codedex_gemini_state.json');
-        expect(fs.existsSync(stateFile)).toBe(true);
+        // Verify a state file matching the pattern exists in tmpdir
+        const tmpFiles = fs.readdirSync(os.tmpdir());
+        const stateFiles = tmpFiles.filter(f => f.startsWith('codedex_gemini_') && f.endsWith('_state.json'));
+        expect(stateFiles.length).toBeGreaterThanOrEqual(1);
 
         // Clean up
-        try { fs.unlinkSync(stateFile); } catch { /* ok */ }
+        for (const f of stateFiles) {
+            try { fs.unlinkSync(path.join(os.tmpdir(), f)); } catch { /* ok */ }
+        }
     });
 });

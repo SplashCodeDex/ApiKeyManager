@@ -142,6 +142,44 @@ function detectImportStyle(content: string): 'esm' | 'cjs' | null {
     return null;
 }
 
+/**
+ * Detect which provider a repo uses by scanning env files and source code.
+ * Returns the preset class name and import subpath.
+ */
+function detectProvider(repoPath: string): { className: string; importPath: string } {
+    // Check .env files and source code for provider hints
+    const envFiles = ['.env', '.env.local', '.env.example', '.env.development'];
+    let allContent = '';
+
+    for (const envFile of envFiles) {
+        const envPath = path.join(repoPath, envFile);
+        try { allContent += fs.readFileSync(envPath, 'utf-8'); } catch { /* ok */ }
+    }
+
+    // Also scan source files for env var references
+    const sourceFiles = findFiles(repoPath, /\.(ts|tsx|js|jsx)$/, undefined, 4);
+    for (const sf of sourceFiles.slice(0, 50)) { // limit to avoid scanning too many
+        try { allContent += fs.readFileSync(sf, 'utf-8'); } catch { /* ok */ }
+    }
+
+    // Priority order: check for specific provider references
+    const hasOpenAI = /OPENAI_API_KEY|openai|gpt-4|gpt-3/i.test(allContent);
+    const hasAnthropic = /ANTHROPIC_API_KEY|anthropic|claude/i.test(allContent);
+    const hasGemini = /GEMINI_API_KEY|GOOGLE_GEMINI|gemini|generateContent/i.test(allContent);
+
+    // If multiple providers detected, prefer MultiManager
+    const providerCount = [hasOpenAI, hasAnthropic, hasGemini].filter(Boolean).length;
+    if (providerCount > 1) {
+        return { className: 'MultiManager', importPath: '@splashcodex/api-key-manager/presets/multi' };
+    }
+
+    if (hasOpenAI) return { className: 'OpenAIManager', importPath: '@splashcodex/api-key-manager/presets/openai' };
+    if (hasAnthropic) return { className: 'AnthropicManager', importPath: '@splashcodex/api-key-manager/presets/anthropic' };
+
+    // Default to Gemini (most common in CodeDeX projects)
+    return { className: 'GeminiManager', importPath: '@splashcodex/api-key-manager/presets/gemini' };
+}
+
 // ── Core Migration Logic ───────────────────────────────────────────────────
 
 function processRepo(repoPath: string, staleFiles: string[]): MigrationReport {
@@ -156,6 +194,10 @@ function processRepo(repoPath: string, staleFiles: string[]): MigrationReport {
     };
 
     console.log(`\n📦 Processing: ${repoName}`);
+
+    // ── Detect which provider this repo uses ──
+    const provider = detectProvider(repoPath);
+    console.log(`    🔍 Detected provider: ${provider.className}`);
 
     // ── Step 1: Find source files that import from the stale ApiKeyManager ──
 
@@ -175,16 +217,16 @@ function processRepo(repoPath: string, staleFiles: string[]): MigrationReport {
 
         const originalContent = content;
 
-        // ── Replace import statement only (not comments or JSDoc) ──
+        // ── Replace import statement using detected provider ──
         if (importStyle === 'esm') {
             content = content.replace(
                 /import\s+\{[^}]*ApiKeyManager[^}]*\}\s+from\s+['"][^'"]*ApiKeyManager['"];?/gi,
-                "import { GeminiManager } from '@splashcodex/api-key-manager/presets/gemini';"
+                `import { ${provider.className} } from '${provider.importPath}';`
             );
         } else if (importStyle === 'cjs') {
             content = content.replace(
                 /(?:const|let|var)\s+\{[^}]*ApiKeyManager[^}]*\}\s*=\s*require\s*\(['"][^'"]*ApiKeyManager['"]\);?/gi,
-                "const { GeminiManager } = require('@splashcodex/api-key-manager/presets/gemini');"
+                `const { ${provider.className} } = require('${provider.importPath}');`
             );
         }
 
@@ -202,30 +244,30 @@ function processRepo(repoPath: string, staleFiles: string[]): MigrationReport {
             // Replace getInstance() calls
             let updated = line.replace(
                 /ApiKeyManager\.getInstance\(\)/g,
-                'GeminiManager.getInstance().data!'
+                `${provider.className}.getInstance().data!`
             );
             updated = updated.replace(
                 /ApiKeyManager\.getInstance\([^)]+\)/g,
-                'GeminiManager.getInstance().data!'
+                `${provider.className}.getInstance().data!`
             );
 
-            // Replace type annotations: `: ApiKeyManager` -> `: GeminiManager`
+            // Replace type annotations: `: ApiKeyManager` -> `: ProviderManager`
             updated = updated.replace(
                 /:\s*ApiKeyManager\b/g,
-                ': GeminiManager'
+                `: ${provider.className}`
             );
 
-            // Replace `new ApiKeyManager` -> `GeminiManager.getInstance().data!`
+            // Replace `new ApiKeyManager` -> `ProviderManager.getInstance().data!`
             updated = updated.replace(
                 /new\s+ApiKeyManager\([^)]*\)/g,
-                'GeminiManager.getInstance().data!'
+                `${provider.className}.getInstance().data!`
             );
 
             // Replace standalone variable references in non-comment code
             // Only when it's clearly a class/type reference, not a string
             updated = updated.replace(
                 /\bApiKeyManager\b(?!\s*['"`])/g,
-                'GeminiManager'
+                provider.className
             );
 
             return updated;
