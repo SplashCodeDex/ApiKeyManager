@@ -41,6 +41,7 @@
 import { readFileSync, readdirSync, existsSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
+import { parse as dotenvParse } from 'dotenv';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -90,49 +91,24 @@ export interface LoadResult {
 // ─── Parser ──────────────────────────────────────────────────────────────────
 
 /**
- * Parse a .env file into key-value pairs.
- * Supports:
+ * Parse a .env file content string into key-value pairs.
+ *
+ * Delegates to `dotenv.parse()` for battle-tested parsing that handles:
  *   KEY=value
- *   KEY="quoted value"
+ *   KEY="quoted value with spaces"
  *   KEY='single quoted'
- *   # comments
- *   empty lines
+ *   KEY=`backtick quoted`
+ *   MULTILINE="line1\nline2"  (real newlines inside double quotes)
+ *   KEY=value # inline comment
  *   export KEY=value (bash-style)
+ *   # full-line comments
+ *   \n, \r, \t escape sequences
+ *
+ * Returns a Map<string, string> for compatibility with the rest of the loader.
  */
 function parseEnvFile(content: string): Map<string, string> {
-    const vars = new Map<string, string>();
-
-    for (const rawLine of content.split('\n')) {
-        const line = rawLine.trim();
-
-        // Skip empty lines and comments
-        if (!line || line.startsWith('#')) continue;
-
-        // Strip optional 'export ' prefix
-        const stripped = line.startsWith('export ') ? line.slice(7) : line;
-
-        // Find the first '=' that separates key from value
-        const eqIndex = stripped.indexOf('=');
-        if (eqIndex === -1) continue;
-
-        const key = stripped.slice(0, eqIndex).trim();
-        let value = stripped.slice(eqIndex + 1).trim();
-
-        // Strip surrounding quotes
-        if (
-            (value.startsWith('"') && value.endsWith('"')) ||
-            (value.startsWith("'") && value.endsWith("'"))
-        ) {
-            value = value.slice(1, -1);
-        }
-
-        // Skip empty keys
-        if (!key) continue;
-
-        vars.set(key, value);
-    }
-
-    return vars;
+    const parsed = dotenvParse(content);
+    return new Map(Object.entries(parsed));
 }
 
 // ─── Loader ──────────────────────────────────────────────────────────────────

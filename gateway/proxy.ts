@@ -6,6 +6,7 @@
  */
 
 import { ProviderDefinition } from './config';
+import { createParser, type ParsedEvent } from 'eventsource-parser';
 
 export interface ProxyRequest {
     provider: string;
@@ -194,6 +195,9 @@ export function createProxyFn(
 
 /**
  * Creates a streaming proxy callback for SSE responses.
+ * Uses `eventsource-parser` for spec-compliant SSE parsing — handles
+ * multi-line data fields, id/retry fields, inline comments, BOM stripping,
+ * and buffer boundaries correctly.
  */
 export function createStreamProxyFn(
     providerDef: ProviderDefinition,
@@ -242,42 +246,64 @@ export function createStreamProxyFn(
 
         if (!res.body) throw new Error('No response body for streaming');
 
+        // ── eventsource-parser state machine ────────────────────────────────
+        // Instead of manually splitting on '\n', we feed raw decoded chunks
+        // into createParser() which fires onEvent only when a complete SSE
+        // event (potentially spanning multiple lines / network chunks) is ready.
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
-        let buffer = '';
+
+        // We use a generator-friendly async queue pattern:
+        // the parser pushes extracted text into a queue and the generator
+        // drains it between reads.
+        const queue: string[] = [];
+
+        const parser = createParser({
+            onEvent(event: ParsedEvent) {
+                if (event.data === '[DONE]') return;
+
+                try {
+                    const parsed = JSON.parse(event.data);
+                    let text = '';
+
+                    if (providerDef.name === 'gemini') {
+                        text = parsed?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                    } else if (providerDef.name === 'openai') {
+                        text = parsed?.choices?.[0]?.delta?.content || '';
+                    } else if (providerDef.name === 'anthropic') {
+                        // Anthropic streams content_block_delta events
+                        if (parsed?.type === 'content_block_delta') {
+                            text = parsed?.delta?.text || '';
+                        }
+                    }
+
+                    if (text) queue.push(text);
+                } catch {
+                    // Skip malformed JSON chunks
+                }
+            },
+        });
 
         try {
             while (true) {
                 const { done, value } = await reader.read();
                 if (done) break;
 
-                buffer += decoder.decode(value, { stream: true });
-                const lines = buffer.split('\n');
-                buffer = lines.pop() || '';
+                // Feed the decoded chunk into the parser state machine
+                parser.feed(decoder.decode(value, { stream: true }));
 
-                for (const line of lines) {
-                    if (line.startsWith('data: ')) {
-                        const data = line.slice(6).trim();
-                        if (data === '[DONE]') return;
+                // Drain any text extracted by the parser from this chunk
+                while (queue.length > 0) {
+                    yield queue.shift()!;
+                }
+            }
 
-                        try {
-                            const parsed = JSON.parse(data);
-                            let text = '';
-                            if (providerDef.name === 'gemini') {
-                                text = parsed?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-                            } else if (providerDef.name === 'openai') {
-                                text = parsed?.choices?.[0]?.delta?.content || '';
-                            } else if (providerDef.name === 'anthropic') {
-                                // Anthropic streams content_block_delta events
-                                if (parsed?.type === 'content_block_delta') {
-                                    text = parsed?.delta?.text || '';
-                                }
-                            }
-                            if (text) yield text;
-                        } catch {
-                            // Skip malformed JSON chunks
-                        }
-                    }
+            // Flush any remaining bytes in the decoder
+            const remaining = decoder.decode();
+            if (remaining) {
+                parser.feed(remaining);
+                while (queue.length > 0) {
+                    yield queue.shift()!;
                 }
             }
         } finally {

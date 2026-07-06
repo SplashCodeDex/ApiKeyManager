@@ -6,9 +6,18 @@
  * NEW in v5.0: Provider Presets (GeminiManager, OpenAIManager, MultiManager),
  *              Built-in Persistence (FileStorage, MemoryStorage)
  * Gemini-Specific: finishReason handling, Safety blocks, RECITATION detection
+ * Infrastructure: cockatiel (Bulkhead queueing + ExponentialBackoff w/ decorrelated jitter)
  */
 
 import { EventEmitter } from 'events';
+import {
+    bulkhead as cockatielBulkhead,
+    BulkheadRejectedError as CockatielBulkheadRejectedError,
+    ExponentialBackoff,
+    decorrelatedJitterGenerator,
+    type BulkheadPolicy,
+    type IBackoff,
+} from 'cockatiel';
 
 // ─── Re-exports: Persistence ─────────────────────────────────────────────────
 // Persistence adapters can be imported from root or via subpath
@@ -84,7 +93,18 @@ export interface ApiKeyManagerOptions {
     storage?: any;
     strategy?: LoadBalancingStrategy;
     fallbackFn?: () => any;
-    concurrency?: number;    // Max concurrent execute() calls
+    /** Max concurrent execute() calls. When limit is reached, excess requests queue (up to concurrencyQueueSize) then reject. */
+    concurrency?: number;
+    /**
+     * Maximum number of requests to hold in the bulkhead queue when all concurrency slots are busy.
+     * - Default: `0` — excess requests are rejected immediately (preserves v3 behavior).
+     * - Set to a positive number to allow requests to wait for a free slot.
+     *
+     * @example
+     * // Queue up to 10 waiting requests before rejecting
+     * new ApiKeyManager(keys, { concurrency: 5, concurrencyQueueSize: 10 })
+     */
+    concurrencyQueueSize?: number;
     semanticCache?: {
         threshold?: number;  // Similarity threshold (0.0 - 1.0, default 0.95)
         ttlMs?: number;      // Cache TTL
@@ -299,9 +319,9 @@ export class ApiKeyManager extends EventEmitter {
     private strategy: LoadBalancingStrategy;
     private fallbackFn?: () => any;
 
-    // Bulkhead state
-    private maxConcurrency: number;
-    private activeCalls: number = 0;
+    // Bulkhead state — managed by cockatiel BulkheadPolicy
+    // Provides FIFO queueing (requests wait for a slot) instead of immediate rejection
+    private bulkheadPolicy: BulkheadPolicy | null = null;
 
     // Health check state
     private healthCheckFn?: (key: string) => Promise<boolean>;
@@ -334,7 +354,7 @@ export class ApiKeyManager extends EventEmitter {
 
         // Detect if second arg is options object or legacy storage
         let options: ApiKeyManagerOptions = {};
-        if (storageOrOptions && typeof storageOrOptions === 'object' && ('storage' in storageOrOptions || 'strategy' in storageOrOptions || 'fallbackFn' in storageOrOptions || 'concurrency' in storageOrOptions || 'semanticCache' in storageOrOptions)) {
+        if (storageOrOptions && typeof storageOrOptions === 'object' && ('storage' in storageOrOptions || 'strategy' in storageOrOptions || 'fallbackFn' in storageOrOptions || 'concurrency' in storageOrOptions || 'concurrencyQueueSize' in storageOrOptions || 'semanticCache' in storageOrOptions)) {
             // New v3 options object
             options = storageOrOptions as ApiKeyManagerOptions;
         } else {
@@ -351,7 +371,18 @@ export class ApiKeyManager extends EventEmitter {
         };
         this.strategy = options.strategy || new StandardStrategy();
         this.fallbackFn = options.fallbackFn;
-        this.maxConcurrency = options.concurrency || Infinity;
+
+        // Build cockatiel bulkhead.
+        // queueSize defaults to 0 (immediate rejection — preserves existing API contract).
+        // Set concurrencyQueueSize > 0 to opt-in to queuing instead of rejection.
+        const maxConcurrency = options.concurrency ?? Infinity;
+        const queueSize = options.concurrencyQueueSize ?? 0;
+        if (maxConcurrency !== Infinity) {
+            this.bulkheadPolicy = cockatielBulkhead(maxConcurrency, queueSize);
+            this.bulkheadPolicy.onReject(() => {
+                this.emit('bulkheadRejected');
+            });
+        }
 
         // Init Semantic Cache if provided
         if (options.semanticCache) {
@@ -608,11 +639,31 @@ export class ApiKeyManager extends EventEmitter {
 
     // ─── Backoff ─────────────────────────────────────────────────────────────
 
+    /**
+     * Calculate exponential backoff with decorrelated jitter using cockatiel.
+     * Decorrelated jitter avoids thundering-herd by randomizing retry intervals
+     * independent of the previous delay, which is statistically superior to
+     * simple `random * exponential` jitter.
+     *
+     * @param attempt - Zero-indexed attempt number
+     */
+    private readonly _backoffFactory = new ExponentialBackoff({
+        initialDelay: CONFIG.BASE_BACKOFF,
+        maxDelay: CONFIG.MAX_BACKOFF,
+        generator: decorrelatedJitterGenerator,
+    });
+
     public calculateBackoff(attempt: number): number {
-        const exponential = CONFIG.BASE_BACKOFF * Math.pow(2, attempt);
-        const capped = Math.min(exponential, CONFIG.MAX_BACKOFF);
-        const jitter = Math.random() * 1000;
-        return capped + jitter;
+        // ExponentialBackoff is a linked-list: _backoffFactory.next() returns an
+        // IBackoff node with { duration, next() }. Walk `attempt` steps to get
+        // the correctly scaled delay. Uses decorrelated jitter (superior to random*exp).
+        // We cast via `any` to bypass the interface vs concrete class arg-count conflict.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let node: any = (this._backoffFactory as any).next();
+        for (let i = 0; i < attempt; i++) {
+            node = node.next();
+        }
+        return (node as IBackoff<unknown>).duration;
     }
 
     // ─── Stats ───────────────────────────────────────────────────────────────
@@ -669,25 +720,24 @@ export class ApiKeyManager extends EventEmitter {
             }
         }
 
-        // 2. Bulkhead check
-        if (this.activeCalls >= this.maxConcurrency) {
-            this.emit('bulkheadRejected');
-            throw new BulkheadRejectionError();
-        }
-
-        this.activeCalls++;
-        try {
-            const result = await this._executeWithRetry(fn, maxRetries, timeoutMs, finishReason, provider);
-
-            // 3. Store in Semantic Cache on success
-            if (this.semanticCache && prompt && currentPromptVector) {
-                this.semanticCache.set(prompt, currentPromptVector, result);
+        // 2. Bulkhead check — if policy exists, cockatiel queues excess requests
+        // instead of immediately rejecting them (queue drains as slots free up)
+        if (this.bulkheadPolicy) {
+            try {
+                const result = await this.bulkheadPolicy.execute(async () => {
+                    return await this._executeWithSemanticAndRetry<T>(fn, maxRetries, timeoutMs, finishReason, provider, prompt, currentPromptVector);
+                });
+                return result;
+            } catch (err) {
+                if (err instanceof CockatielBulkheadRejectedError) {
+                    throw new BulkheadRejectionError();
+                }
+                throw err;
             }
-
-            return result;
-        } finally {
-            this.activeCalls--;
         }
+
+        // No concurrency limit configured — run directly
+        return this._executeWithSemanticAndRetry<T>(fn, maxRetries, timeoutMs, finishReason, provider, prompt, currentPromptVector);
     }
 
     /**
@@ -737,13 +787,18 @@ export class ApiKeyManager extends EventEmitter {
             }
         }
 
-        // 2. Bulkhead check
-        if (this.activeCalls >= this.maxConcurrency) {
-            this.emit('bulkheadRejected');
-            throw new BulkheadRejectionError();
+        // 2. Bulkhead check — gate streaming with bulkhead slot management.
+        // Async generators can't be wrapped in bulkheadPolicy.execute() (which expects
+        // a Promise), so we check availability and track manually.
+        const useBulkhead = this.bulkheadPolicy !== null;
+        if (useBulkhead) {
+            const slots = (this.bulkheadPolicy as any);
+            const hasSlot = (slots.executionSlots > 0) || (slots.queueSlots > 0);
+            if (!hasSlot) {
+                this.emit('bulkheadRejected');
+                throw new BulkheadRejectionError();
+            }
         }
-
-        this.activeCalls++;
         const accumulatedChunks: T[] = [];
         let lastError: any;
 
@@ -818,10 +873,33 @@ export class ApiKeyManager extends EventEmitter {
                 }
             }
         } finally {
-            this.activeCalls--;
+            // Slot is freed automatically when the generator completes/throws
         }
 
         throw lastError;
+    }
+
+    /**
+     * Helper: stores result in semantic cache then returns it.
+     * Called by the bulkhead execute() callback and the no-bulkhead path.
+     */
+    private async _executeWithSemanticAndRetry<T>(
+        fn: (key: string, signal?: AbortSignal) => Promise<T>,
+        maxRetries: number,
+        timeoutMs?: number,
+        finishReason?: string,
+        provider?: string,
+        prompt?: string,
+        currentPromptVector?: number[] | null
+    ): Promise<T> {
+        const result = await this._executeWithRetry(fn, maxRetries, timeoutMs, finishReason, provider);
+
+        // Store in Semantic Cache on success
+        if (this.semanticCache && prompt && currentPromptVector) {
+            this.semanticCache.set(prompt, currentPromptVector, result);
+        }
+
+        return result;
     }
 
     private async _executeWithRetry<T>(

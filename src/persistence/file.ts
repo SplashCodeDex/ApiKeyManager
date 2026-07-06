@@ -10,7 +10,7 @@
  * @module persistence/file
  */
 
-import { writeFileSync, readFileSync, existsSync, mkdirSync, unlinkSync } from 'fs';
+import { writeFileSync, readFileSync, existsSync, mkdirSync, unlinkSync, renameSync } from 'fs';
 import { dirname, join } from 'path';
 import { tmpdir } from 'os';
 
@@ -57,13 +57,20 @@ export class FileStorage {
     }
 
     setItem(_key: string, value: string): void {
+        const tmpPath = this.filePath + '.tmp';
         try {
             const dir = dirname(this.filePath);
             if (!existsSync(dir)) {
                 mkdirSync(dir, { recursive: true });
             }
-            writeFileSync(this.filePath, value, 'utf-8');
+            // Write to a temp file first, then atomically rename to the target.
+            // renameSync() is a single syscall — the file is never in a
+            // half-written state if the process crashes mid-write.
+            writeFileSync(tmpPath, value, 'utf-8');
+            renameSync(tmpPath, this.filePath);
         } catch {
+            // Clean up temp file if rename failed
+            try { if (existsSync(tmpPath)) unlinkSync(tmpPath); } catch { /* silent */ }
             // Silently fail — state will be lost on restart
         }
     }
