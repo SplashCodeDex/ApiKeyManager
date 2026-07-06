@@ -18,6 +18,7 @@ import {
     type BulkheadPolicy,
     type IBackoff,
 } from 'cockatiel';
+import { z } from 'zod';
 
 // ─── Re-exports: Persistence ─────────────────────────────────────────────────
 // Persistence adapters can be imported from root or via subpath
@@ -89,12 +90,12 @@ export interface ExecuteOptions {
     provider?: string;       // Filter keys by provider (e.g. 'openai')
 }
 
-export interface ApiKeyManagerOptions {
-    storage?: any;
-    strategy?: LoadBalancingStrategy;
-    fallbackFn?: () => any;
+export const ApiKeyManagerOptionsSchema = z.object({
+    storage: z.any().optional(),
+    strategy: z.any().optional(), // Expected: LoadBalancingStrategy
+    fallbackFn: z.custom<() => any>((val) => typeof val === 'function', 'Must be a function').optional(),
     /** Max concurrent execute() calls. When limit is reached, excess requests queue (up to concurrencyQueueSize) then reject. */
-    concurrency?: number;
+    concurrency: z.number().int().positive().optional(),
     /**
      * Maximum number of requests to hold in the bulkhead queue when all concurrency slots are busy.
      * - Default: `0` — excess requests are rejected immediately (preserves v3 behavior).
@@ -104,13 +105,15 @@ export interface ApiKeyManagerOptions {
      * // Queue up to 10 waiting requests before rejecting
      * new ApiKeyManager(keys, { concurrency: 5, concurrencyQueueSize: 10 })
      */
-    concurrencyQueueSize?: number;
-    semanticCache?: {
-        threshold?: number;  // Similarity threshold (0.0 - 1.0, default 0.95)
-        ttlMs?: number;      // Cache TTL
-        getEmbedding: (text: string) => Promise<number[]>;
-    };
-}
+    concurrencyQueueSize: z.number().int().nonnegative().optional(),
+    semanticCache: z.object({
+        threshold: z.number().min(0).max(1).optional(),  // Similarity threshold (0.0 - 1.0, default 0.95)
+        ttlMs: z.number().int().positive().optional(),      // Cache TTL
+        getEmbedding: z.custom<(text: string) => Promise<number[]>>((val) => typeof val === 'function', 'Must be a function'),
+    }).optional(),
+}).passthrough();
+
+export type ApiKeyManagerOptions = z.infer<typeof ApiKeyManagerOptionsSchema>;
 
 export interface CacheEntry {
     vector: number[];
@@ -364,6 +367,9 @@ export class ApiKeyManager extends EventEmitter {
                 strategy: strategy,
             };
         }
+
+        // Validate options with Zod (will throw meaningful errors on invalid configs)
+        options = ApiKeyManagerOptionsSchema.parse(options);
 
         this.storage = options.storage || {
             getItem: () => null,
