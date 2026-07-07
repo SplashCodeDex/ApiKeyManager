@@ -4,16 +4,21 @@
 
 [![npm version](https://img.shields.io/npm/v/@splashcodex/ApiKeyManager)](https://www.npmjs.com/package/@splashcodex/ApiKeyManager)
 
-## New in v5.0 (Ecosystem Edition)
+## New in v5.3.0 (Resilience Upgrade)
+- **Bulkhead Queueing (`cockatiel`)** — Safely handle traffic spikes. Requests that exceed your `concurrency` limit are queued (up to `concurrencyQueueSize`) rather than immediately rejected!
+- **Strict Configuration Validation (`zod`)** — Deep runtime validation on all initialization options.
+- **Improved Gateway SSE Parser** — Uses `eventsource-parser` for 100% reliable Server-Sent Events proxying.
+
+## Features in v5.0 (Ecosystem Edition)
 
 - **Provider Presets** — One-line setup for `GeminiManager`, `OpenAIManager`, and `MultiManager`.
-- **Automatic Env Parsing** — Reads `GOOGLE_GEMINI_API_KEY`, `OPENAI_API_KEY`, etc. (supports JSON arrays and comma-separated strings).
+- **Automatic Env Parsing** — Reads `GOOGLE_GEMINI_API_KEY`, `OPENAI_API_KEY`, etc. (supports JSON arrays and comma-separated strings) from any OS directory smoothly.
 - **Built-in Persistence** — `FileStorage` (survives restarts) and `MemoryStorage` included.
 - **Singleton Pattern** — Thread-safe singletons with `getInstance()` and `Result<T>` pattern.
 - **Multi-Provider Vault** — Manage multiple providers (`gemini`, `openai`, `anthropic`) from a single entry point.
 - **Centralized API Gateway** — Built-in Fastify proxy server to centralize AI requests for multiple apps securely.
 
-## Features
+## Core Features
 
 - **Circuit Breaker** — Keys transition through `CLOSED → OPEN → HALF_OPEN → DEAD`
 - **Error Classification** — Automatic detection of 429 (Quota), 403 (Auth), 5xx (Transient), Timeout, Safety blocks
