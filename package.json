@@ -1,6 +1,6 @@
 {
     "name": "@splashcodex/api-key-manager",
-    "version": "5.3.0",
+    "version": "5.4.0",
     "description": "Universal API Key Management Gateway with centralized env loader, provider presets, persistence, and multi-provider vault",
     "bin": {
         "api-key-manager": "./bin/cli.js"
