@@ -16,7 +16,7 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import { MultiManager } from '../src/presets/multi';
 import { loadConfig, ProviderDefinition } from './config';
-import { createProxyFn, createStreamProxyFn, ProxyRequest } from './proxy';
+import { createProxyFn, createStreamProxyFn, TransparentProxyRequest } from './proxy';
 import { getAppId, sendError, log } from './middleware';
 
 // ─── Load centralized env FIRST (before anything reads process.env) ─────────
@@ -61,105 +61,88 @@ const app = Fastify({ logger: false });
 
 app.register(cors, { origin: true });
 
-// ─── POST /v1/generate ───────────────────────────────────────────────────────
+// ─── Transparent Reverse Proxy Route ──────────────────────────────────────────
 
-interface GenerateBody {
-    provider: string;
-    model?: string;
-    prompt: string;
-    systemInstruction?: string;
-    temperature?: number;
-    maxTokens?: number;
-    maxRetries?: number;
-    timeoutMs?: number;
-}
-
-app.post<{ Body: GenerateBody }>('/v1/generate', async (request, reply) => {
+app.all('/:provider/*', async (request, reply) => {
     const appId = getAppId(request);
-    const { provider, model, prompt, systemInstruction, temperature, maxTokens, maxRetries, timeoutMs } = request.body || {};
-
-    if (!provider) return sendError(reply, 400, 'Missing "provider" field (e.g. "gemini", "openai").');
-    if (!prompt) return sendError(reply, 400, 'Missing "prompt" field.');
+    const params = request.params as { provider: string; '*': string };
+    const provider = params.provider;
+    
+    // Reconstruct the upstream path and query string
+    const queryIndex = request.raw.url.indexOf('?');
+    const queryString = queryIndex !== -1 ? request.raw.url.substring(queryIndex) : '';
+    const path = '/' + params['*'] + queryString;
 
     const providerDef = providerMap.get(provider);
     if (!providerDef) {
+        // Fallback for missing provider or unmatched route
+        if (provider === 'v1' && (params['*'] === 'generate' || params['*'] === 'stream')) {
+            return sendError(reply, 400, 'The gateway has been upgraded to a transparent proxy. Please use /gemini/* or /openai/* directly with the official SDKs.');
+        }
         return sendError(reply, 400, `Unknown provider "${provider}". Available: ${[...providerMap.keys()].join(', ')}`);
     }
 
-    // Default to the first model if none specified
-    const selectedModel = model || Object.keys(providerDef.models)[0];
-
-    const proxyReq: ProxyRequest = {
+    const proxyReq: TransparentProxyRequest = {
         provider,
-        model: selectedModel,
-        prompt,
-        systemInstruction,
-        temperature,
-        maxTokens,
+        path,
+        method: request.method,
+        headers: request.headers as Record<string, string>,
+        body: request.body,
     };
 
-    log('info', appId, `→ ${provider}/${selectedModel} "${prompt.substring(0, 50)}..."`);
+    const isStream = path.includes('?alt=sse') || (request.body && (request.body as any).stream === true);
 
     try {
-        const proxyFn = createProxyFn(providerDef, proxyReq);
-        const result = await vault.execute(proxyFn, {
-            provider,
-            maxRetries: maxRetries || 3,
-            timeoutMs: timeoutMs || 60_000,
-        });
+        if (isStream) {
+            log('info', appId, `→ STREAM ${provider} ${path}`);
+            reply.raw.writeHead(200, {
+                'Content-Type': 'text/event-stream',
+                'Cache-Control': 'no-cache',
+                'Connection': 'keep-alive',
+            });
 
-        log('info', appId, `← ${result.provider} ${result.latencyMs}ms`);
-        return reply.send(result);
+            const streamFn = createStreamProxyFn(providerDef, proxyReq);
+            const stream = vault.executeStream(streamFn, {
+                provider,
+                maxRetries: 3,
+                timeoutMs: 60_000,
+            });
+
+            for await (const chunk of stream) {
+                reply.raw.write(chunk);
+            }
+
+            reply.raw.end();
+            log('info', appId, `← STREAM complete`);
+        } else {
+            log('info', appId, `→ ${provider} ${path}`);
+            
+            const proxyFn = createProxyFn(providerDef, proxyReq);
+            const result = await vault.execute(proxyFn, {
+                provider,
+                maxRetries: 3,
+                timeoutMs: 60_000,
+            });
+
+            reply.status(result.statusCode);
+            
+            // Forward safe headers
+            for (const [k, v] of Object.entries(result.headers)) {
+                if (k.toLowerCase() !== 'transfer-encoding' && k.toLowerCase() !== 'content-encoding') {
+                    reply.header(k, v);
+                }
+            }
+
+            reply.send(result.body);
+            log('info', appId, `← ${result.provider} ${result.latencyMs}ms`);
+        }
     } catch (err: any) {
         log('error', appId, `✗ ${err.message}`);
-        return sendError(reply, err.status || 502, err.message);
-    }
-});
-
-// ─── POST /v1/stream ─────────────────────────────────────────────────────────
-
-app.post<{ Body: GenerateBody }>('/v1/stream', async (request, reply) => {
-    const appId = getAppId(request);
-    const { provider, model, prompt, systemInstruction, temperature, maxTokens, maxRetries, timeoutMs } = request.body || {};
-
-    if (!provider) return sendError(reply, 400, 'Missing "provider" field.');
-    if (!prompt) return sendError(reply, 400, 'Missing "prompt" field.');
-
-    const providerDef = providerMap.get(provider);
-    if (!providerDef) {
-        return sendError(reply, 400, `Unknown provider "${provider}".`);
-    }
-
-    const selectedModel = model || Object.keys(providerDef.models)[0];
-    const proxyReq: ProxyRequest = { provider, model: selectedModel, prompt, systemInstruction, temperature, maxTokens };
-
-    log('info', appId, `→ STREAM ${provider}/${selectedModel}`);
-
-    reply.raw.writeHead(200, {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
-    });
-
-    try {
-        const streamFn = createStreamProxyFn(providerDef, proxyReq);
-        const stream = vault.executeStream(streamFn, {
-            provider,
-            maxRetries: maxRetries || 3,
-            timeoutMs: timeoutMs || 60_000,
-        });
-
-        for await (const chunk of stream) {
-            reply.raw.write(`data: ${JSON.stringify({ text: chunk })}\n\n`);
+        if (!reply.raw.headersSent) {
+            return sendError(reply, err.status || 502, err.message);
+        } else {
+            reply.raw.end();
         }
-
-        reply.raw.write('data: [DONE]\n\n');
-        reply.raw.end();
-        log('info', appId, `← STREAM complete`);
-    } catch (err: any) {
-        reply.raw.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
-        reply.raw.end();
-        log('error', appId, `✗ STREAM failed: ${err.message}`);
     }
 });
 

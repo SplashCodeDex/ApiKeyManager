@@ -8,154 +8,49 @@
 import { ProviderDefinition } from './config';
 import { createParser, type ParsedEvent } from 'eventsource-parser';
 
-export interface ProxyRequest {
+export interface TransparentProxyRequest {
     provider: string;
-    model: string;
-    prompt: string;
-    systemInstruction?: string;
-    temperature?: number;
-    maxTokens?: number;
+    path: string; // e.g. "/v1beta/models/gemini-1.5-pro:generateContent"
+    method: string;
+    headers: Record<string, string>;
+    body?: any; // The raw body from the client (parsed JSON or string)
 }
 
 export interface ProxyResponse {
     success: boolean;
     provider: string;
-    model: string;
-    result: string;
+    statusCode: number;
+    headers: Record<string, string>;
+    body: any; // Raw JSON or text
     latencyMs: number;
-    usage?: {
-        promptTokens?: number;
-        completionTokens?: number;
-        totalTokens?: number;
-    };
 }
 
 /**
- * Build the upstream request body based on the provider format.
+ * Filter headers from client to avoid overriding crucial fetch headers or causing conflicts.
  */
-function buildRequestBody(provider: ProviderDefinition, req: ProxyRequest): any {
-    if (provider.name === 'gemini') {
-        const body: any = {
-            contents: [{ parts: [{ text: req.prompt }] }],
-            generationConfig: {} as any,
-        };
-        if (req.systemInstruction) {
-            body.systemInstruction = { parts: [{ text: req.systemInstruction }] };
+function sanitizeHeaders(incoming: Record<string, string>): Record<string, string> {
+    const safe: Record<string, string> = {};
+    const skip = ['host', 'connection', 'content-length', 'accept-encoding'];
+    for (const [k, v] of Object.entries(incoming)) {
+        if (!skip.includes(k.toLowerCase()) && typeof v === 'string') {
+            safe[k] = v;
         }
-        if (req.temperature !== undefined) {
-            body.generationConfig.temperature = req.temperature;
-        }
-        if (req.maxTokens !== undefined) {
-            body.generationConfig.maxOutputTokens = req.maxTokens;
-        }
-        return body;
     }
-
-    if (provider.name === 'openai') {
-        const messages: any[] = [];
-        if (req.systemInstruction) {
-            messages.push({ role: 'system', content: req.systemInstruction });
-        }
-        messages.push({ role: 'user', content: req.prompt });
-
-        const body: any = {
-            model: req.model,
-            messages,
-        };
-        if (req.temperature !== undefined) body.temperature = req.temperature;
-        if (req.maxTokens !== undefined) body.max_tokens = req.maxTokens;
-        return body;
-    }
-
-    if (provider.name === 'anthropic') {
-        const body: any = {
-            model: req.model,
-            max_tokens: req.maxTokens || 1024,
-            messages: [{ role: 'user', content: req.prompt }],
-        };
-        if (req.systemInstruction) {
-            body.system = req.systemInstruction;
-        }
-        if (req.temperature !== undefined) body.temperature = req.temperature;
-        return body;
-    }
-
-    // Generic fallback
-    return { prompt: req.prompt };
+    return safe;
 }
 
 /**
- * Parse the upstream response into a standardized ProxyResponse.
- */
-function parseResponse(provider: ProviderDefinition, data: any, req: ProxyRequest, latencyMs: number): ProxyResponse {
-    if (provider.name === 'gemini') {
-        const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-        return {
-            success: true,
-            provider: provider.name,
-            model: req.model,
-            result: text,
-            latencyMs,
-            usage: {
-                promptTokens: data?.usageMetadata?.promptTokenCount,
-                completionTokens: data?.usageMetadata?.candidatesTokenCount,
-                totalTokens: data?.usageMetadata?.totalTokenCount,
-            },
-        };
-    }
-
-    if (provider.name === 'openai') {
-        const text = data?.choices?.[0]?.message?.content || '';
-        return {
-            success: true,
-            provider: provider.name,
-            model: req.model,
-            result: text,
-            latencyMs,
-            usage: {
-                promptTokens: data?.usage?.prompt_tokens,
-                completionTokens: data?.usage?.completion_tokens,
-                totalTokens: data?.usage?.total_tokens,
-            },
-        };
-    }
-
-    if (provider.name === 'anthropic') {
-        const text = data?.content?.[0]?.text || '';
-        return {
-            success: true,
-            provider: provider.name,
-            model: req.model,
-            result: text,
-            latencyMs,
-            usage: {
-                promptTokens: data?.usage?.input_tokens,
-                completionTokens: data?.usage?.output_tokens,
-                totalTokens: (data?.usage?.input_tokens || 0) + (data?.usage?.output_tokens || 0),
-            },
-        };
-    }
-
-    return { success: true, provider: provider.name, model: req.model, result: JSON.stringify(data), latencyMs };
-}
-
-/**
- * Creates the callback function that MultiManager.execute() will call.
+ * Creates the callback function that MultiManager.execute() will call for a standard request.
  * This is where the magic happens — the key is injected by the manager.
  */
 export function createProxyFn(
     providerDef: ProviderDefinition,
-    req: ProxyRequest
+    req: TransparentProxyRequest
 ): (key: string) => Promise<ProxyResponse> {
     return async (key: string): Promise<ProxyResponse> => {
-        const modelPath = providerDef.models[req.model];
-        if (!modelPath) {
-            throw Object.assign(new Error(`Unknown model "${req.model}" for provider "${providerDef.name}". Available: ${Object.keys(providerDef.models).join(', ')}`), { status: 400 });
-        }
-
-        // Build the URL
-        let url = `${providerDef.baseUrl}${modelPath}`;
-        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        // Build the transparent URL
+        let url = `${providerDef.baseUrl}${req.path}`;
+        const headers = sanitizeHeaders(req.headers);
 
         // Inject the API key
         if (providerDef.authStyle === 'query') {
@@ -165,20 +60,25 @@ export function createProxyFn(
         }
 
         // Anthropic requires a version header on all requests
-        if (providerDef.name === 'anthropic') {
+        if (providerDef.name === 'anthropic' && !headers['anthropic-version']) {
             headers['anthropic-version'] = '2023-06-01';
         }
 
-        const body = buildRequestBody(providerDef, req);
-        const start = Date.now();
-
-        const res = await fetch(url, {
-            method: 'POST',
+        const fetchOpts: RequestInit = {
+            method: req.method,
             headers,
-            body: JSON.stringify(body),
-        });
+        };
 
+        if (req.method !== 'GET' && req.method !== 'HEAD' && req.body) {
+            fetchOpts.body = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
+        }
+
+        const start = Date.now();
+        const res = await fetch(url, fetchOpts);
         const latencyMs = Date.now() - start;
+
+        const resHeaders: Record<string, string> = {};
+        res.headers.forEach((v, k) => { resHeaders[k] = v; });
 
         if (!res.ok) {
             const errorBody = await res.text();
@@ -188,53 +88,52 @@ export function createProxyFn(
             throw err;
         }
 
-        const data = await res.json();
-        return parseResponse(providerDef, data, req, latencyMs);
+        // Try to parse as JSON if possible, else return text
+        const text = await res.text();
+        let body = text;
+        try {
+            body = JSON.parse(text);
+        } catch { }
+
+        return {
+            success: true,
+            provider: providerDef.name,
+            statusCode: res.status,
+            headers: resHeaders,
+            body,
+            latencyMs,
+        };
     };
 }
 
 /**
  * Creates a streaming proxy callback for SSE responses.
- * Uses `eventsource-parser` for spec-compliant SSE parsing — handles
- * multi-line data fields, id/retry fields, inline comments, BOM stripping,
- * and buffer boundaries correctly.
+ * Transparently pipes the raw SSE Buffer chunks from the upstream provider.
  */
 export function createStreamProxyFn(
     providerDef: ProviderDefinition,
-    req: ProxyRequest
-): (key: string) => AsyncGenerator<string, void, unknown> {
-    return async function* (key: string): AsyncGenerator<string, void, unknown> {
-        const modelPath = providerDef.models[req.model];
-        if (!modelPath) {
-            throw Object.assign(new Error(`Unknown model "${req.model}"`), { status: 400 });
-        }
+    req: TransparentProxyRequest
+): (key: string) => AsyncGenerator<Uint8Array, void, unknown> {
+    return async function* (key: string): AsyncGenerator<Uint8Array, void, unknown> {
+        let url = `${providerDef.baseUrl}${req.path}`;
+        const headers = sanitizeHeaders(req.headers);
 
-        let url: string;
-        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-
-        if (providerDef.name === 'gemini') {
-            // Gemini uses a different endpoint for streaming
-            const streamPath = modelPath.replace(':generateContent', ':streamGenerateContent');
-            url = `${providerDef.baseUrl}${streamPath}?alt=sse&${providerDef.authKey}=${key}`;
+        if (providerDef.authStyle === 'query') {
+            url += `${url.includes('?') ? '&' : '?'}${providerDef.authKey}=${key}`;
         } else {
-            url = `${providerDef.baseUrl}${modelPath}`;
             headers[providerDef.authKey] = `${providerDef.authPrefix || ''}${key}`;
         }
 
-        // Anthropic requires a version header
-        if (providerDef.name === 'anthropic') {
+        if (providerDef.name === 'anthropic' && !headers['anthropic-version']) {
             headers['anthropic-version'] = '2023-06-01';
         }
 
-        const body = buildRequestBody(providerDef, req);
-        if (providerDef.name === 'openai') {
-            body.stream = true;
-        }
-        if (providerDef.name === 'anthropic') {
-            body.stream = true;
+        const fetchOpts: RequestInit = { method: req.method, headers };
+        if (req.method !== 'GET' && req.method !== 'HEAD' && req.body) {
+            fetchOpts.body = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
         }
 
-        const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+        const res = await fetch(url, fetchOpts);
 
         if (!res.ok) {
             const errText = await res.text();
@@ -246,65 +145,13 @@ export function createStreamProxyFn(
 
         if (!res.body) throw new Error('No response body for streaming');
 
-        // ── eventsource-parser state machine ────────────────────────────────
-        // Instead of manually splitting on '\n', we feed raw decoded chunks
-        // into createParser() which fires onEvent only when a complete SSE
-        // event (potentially spanning multiple lines / network chunks) is ready.
         const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-
-        // We use a generator-friendly async queue pattern:
-        // the parser pushes extracted text into a queue and the generator
-        // drains it between reads.
-        const queue: string[] = [];
-
-        const parser = createParser({
-            onEvent(event: ParsedEvent) {
-                if (event.data === '[DONE]') return;
-
-                try {
-                    const parsed = JSON.parse(event.data);
-                    let text = '';
-
-                    if (providerDef.name === 'gemini') {
-                        text = parsed?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-                    } else if (providerDef.name === 'openai') {
-                        text = parsed?.choices?.[0]?.delta?.content || '';
-                    } else if (providerDef.name === 'anthropic') {
-                        // Anthropic streams content_block_delta events
-                        if (parsed?.type === 'content_block_delta') {
-                            text = parsed?.delta?.text || '';
-                        }
-                    }
-
-                    if (text) queue.push(text);
-                } catch {
-                    // Skip malformed JSON chunks
-                }
-            },
-        });
-
         try {
             while (true) {
                 const { done, value } = await reader.read();
                 if (done) break;
-
-                // Feed the decoded chunk into the parser state machine
-                parser.feed(decoder.decode(value, { stream: true }));
-
-                // Drain any text extracted by the parser from this chunk
-                while (queue.length > 0) {
-                    yield queue.shift()!;
-                }
-            }
-
-            // Flush any remaining bytes in the decoder
-            const remaining = decoder.decode();
-            if (remaining) {
-                parser.feed(remaining);
-                while (queue.length > 0) {
-                    yield queue.shift()!;
-                }
+                // Yield the raw Uint8Array chunk verbatim to the client
+                yield value;
             }
         } finally {
             reader.releaseLock();
