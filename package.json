@@ -92,6 +92,10 @@
             "import": "./dist/gateway/middleware.js",
             "require": "./dist/gateway/middleware.js",
             "types": "./dist/gateway/middleware.d.ts"
+        },
+        "./gateway/server": {
+            "import": "./bin/gateway.js",
+            "require": "./bin/gateway.js"
         }
     },
     "typesVersions": {

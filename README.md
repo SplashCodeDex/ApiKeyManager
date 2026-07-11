@@ -264,6 +264,18 @@ npx @splashcodex/api-key-manager status
 
 Run a standalone Fastify proxy server that centralizes key management, circuit breaking, and rate limiting for all your microservices.
 
+### 🚀 One-Liner with Your Dev Server (e.g. Vite)
+
+The gateway can spawn your dev server as a child process — one terminal, both servers, Ctrl+C kills both:
+
+```bash
+npx @splashcodex/api-key-manager gateway -- npm run dev
+npx @splashcodex/api-key-manager gateway -- npx vite --port 5173
+npx @splashcodex/api-key-manager gateway -- npx next dev
+```
+
+The gateway starts first (default `http://localhost:9000`), then your dev server launches. When you Ctrl+C, the gateway cleanly terminates both processes. No separate terminal, no `concurrently`, no pm2 required.
+
 ### Starting the Gateway
 
 ```bash

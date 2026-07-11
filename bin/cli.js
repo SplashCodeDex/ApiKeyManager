@@ -15,6 +15,7 @@ function printDocs() {
     console.log(`   npx @splashcodex/api-key-manager init    \x1b[90m# Scaffold demo + central env directory\x1b[0m`);
     console.log(`   npx @splashcodex/api-key-manager setup   \x1b[90m# Create ~/codedex/env/ with template files\x1b[0m`);
     console.log(`   npx @splashcodex/api-key-manager status  \x1b[90m# Show which env files are loaded\x1b[0m`);
+    console.log(`   npx @splashcodex/api-key-manager gateway \x1b[90m# Start the API gateway proxy server\x1b[0m`);
     console.log('');
 }
 
@@ -174,6 +175,9 @@ switch (command) {
         break;
     case 'status':
         showStatus();
+        break;
+    case 'gateway':
+        require('./gateway');
         break;
     default:
         printDocs();
