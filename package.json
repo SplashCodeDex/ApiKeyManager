@@ -2,6 +2,21 @@
     "name": "@splashcodex/api-key-manager",
     "version": "5.4.0",
     "description": "Universal API Key Management Gateway with centralized env loader, provider presets, persistence, and multi-provider vault",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/SplashCodeDex/ApiKeyManager.git"
+    },
+    "bugs": {
+        "url": "https://github.com/SplashCodeDex/ApiKeyManager/issues"
+    },
+    "homepage": "https://github.com/SplashCodeDex/ApiKeyManager#readme",
+    "engines": {
+        "node": ">=18.0.0"
+    },
+    "publishConfig": {
+        "access": "public"
+    },
+    "sideEffects": false,
     "bin": {
         "api-key-manager": "./bin/cli.js"
     },
@@ -64,16 +79,19 @@
             "types": "./dist/persistence/memory.d.ts"
         },
         "./gateway/config": {
-            "import": "./gateway/config.ts",
-            "require": "./gateway/config.ts"
+            "import": "./dist/gateway/config.js",
+            "require": "./dist/gateway/config.js",
+            "types": "./dist/gateway/config.d.ts"
         },
         "./gateway/proxy": {
-            "import": "./gateway/proxy.ts",
-            "require": "./gateway/proxy.ts"
+            "import": "./dist/gateway/proxy.js",
+            "require": "./dist/gateway/proxy.js",
+            "types": "./dist/gateway/proxy.d.ts"
         },
         "./gateway/middleware": {
-            "import": "./gateway/middleware.ts",
-            "require": "./gateway/middleware.ts"
+            "import": "./dist/gateway/middleware.js",
+            "require": "./dist/gateway/middleware.js",
+            "types": "./dist/gateway/middleware.d.ts"
         }
     },
     "typesVersions": {
@@ -107,20 +125,31 @@
             ],
             "persistence/memory": [
                 "dist/persistence/memory.d.ts"
+            ],
+            "gateway/config": [
+                "dist/gateway/config.d.ts"
+            ],
+            "gateway/proxy": [
+                "dist/gateway/proxy.d.ts"
+            ],
+            "gateway/middleware": [
+                "dist/gateway/middleware.d.ts"
             ]
         }
     },
     "files": [
         "dist",
-        "src",
-        "gateway",
-        "bin"
+        "bin",
+        "README.md",
+        "CHANGELOG.md"
     ],
     "scripts": {
-        "build": "tsc",
+        "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+        "build": "npm run clean && tsc && tsc -p tsconfig.gateway.json",
         "test": "jest --verbose",
-        "prepublishOnly": "npm run build",
-"postinstall": "node -e \"console.log('\\n\\x1b[32m🌟 Successfully installed @splashcodex/api-key-manager v5.4.0!\\x1b[0m\\n\\x1b[36m📚 Documentation: https://www.npmjs.com/package/@splashcodex/ApiKeyManager\\x1b[0m\\n\\x1b[33m🚀 Quick Start:\\x1b[0m\\n   import { loadCentralEnv } from \\'@splashcodex/api-key-manager/env\\';\\n   import { GeminiManager } from \\'@splashcodex/api-key-manager/presets/gemini\\';\\n   loadCentralEnv();\\n   const gemini = GeminiManager.getInstance().data;\\n')\"",
+        "prepublishOnly": "npm run build && npm test",
+        "prepack": "npm run build",
+        "postinstall": "node -e \"process.stdout.write('\\x1b[32m@splashcodex/api-key-manager v5.4.0\\x1b[0m\\n')\"",
         "gateway": "ts-node gateway/server.ts",
         "gateway:dev": "npx nodemon --watch gateway/ --ext ts --exec ts-node gateway/server.ts"
     },

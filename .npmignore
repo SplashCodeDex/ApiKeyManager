@@ -1,0 +1,35 @@
+# Development files
+src/
+gateway/
+tests/
+scripts/
+python-sdk/
+.github/
+
+# TypeScript config
+tsconfig.json
+tsconfig.gateway.json
+jest.config.js
+
+# Development artifacts
+playground.ts
+transparent_test.ts
+*.log
+*.bak
+.bak
+
+# IDE and OS files
+.DS_Store
+.vscode/
+.idea/
+
+# Node modules (shouldn't be there, but safety)
+node_modules/
+
+# Git files
+.git/
+.gitignore
+.npmignore
+
+# Documentation source (only ship compiled README + CHANGELOG)
+WhyThisProject.md

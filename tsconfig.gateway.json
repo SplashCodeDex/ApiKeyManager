@@ -9,15 +9,14 @@
         "esModuleInterop": true,
         "skipLibCheck": true,
         "forceConsistentCasingInFileNames": true,
-        "outDir": "./dist",
-        "rootDir": "./src"
+        "outDir": "./dist/gateway",
+        "rootDir": "./gateway"
     },
     "include": [
-        "src/**/*"
+        "gateway/**/*"
     ],
     "exclude": [
         "node_modules",
-        "tests",
-        "verify_rotation.ts"
+        "gateway/server.ts"
     ]
 }
