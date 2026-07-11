@@ -9,7 +9,7 @@ const command = args[0];
 const ENV_DIR = path.join(os.homedir(), 'codedex', 'env');
 
 function printDocs() {
-    console.log(`\x1b[92m@splashcodex/api-key-manager v5.1\x1b[0m`);
+    console.log(`\x1b[92m@splashcodex/api-key-manager v5.4.0\x1b[0m`);
     console.log(`\x1b[96mDocs: https://www.npmjs.com/package/@splashcodex/ApiKeyManager\x1b[0m\n`);
     console.log(`\x1b[93mCommands:\x1b[0m`);
     console.log(`   npx @splashcodex/api-key-manager init    \x1b[90m# Scaffold demo + central env directory\x1b[0m`);
@@ -116,7 +116,7 @@ function initProject() {
     // Create demo.ts
     if (!fs.existsSync(demoPath)) {
         const tsCode = `/**
- * Demo: @splashcodex/api-key-manager v5.1
+ * Demo: @splashcodex/api-key-manager v5.4.0
  *
  * Shows the two-layer pattern:
  *   Layer 1: loadCentralEnv() loads keys from ~/codedex/env/
