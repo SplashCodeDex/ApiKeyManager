@@ -1,6 +1,6 @@
 {
     "name": "@splashcodex/api-key-manager",
-    "version": "5.4.0",
+    "version": "5.5.0",
     "description": "Universal API Key Management Gateway with centralized env loader, provider presets, persistence, and multi-provider vault",
     "repository": {
         "type": "git",
@@ -149,7 +149,7 @@
         "test": "jest --verbose",
         "prepublishOnly": "npm run build && npm test",
         "prepack": "npm run build",
-        "postinstall": "node -e \"process.stdout.write('\\x1b[32m@splashcodex/api-key-manager v5.4.0\\x1b[0m\\n')\"",
+        "postinstall": "node -e \"process.stdout.write('\\x1b[32m@splashcodex/api-key-manager v5.5.0\\x1b[0m\\n')\"",
         "gateway": "ts-node gateway/server.ts",
         "gateway:dev": "npx nodemon --watch gateway/ --ext ts --exec ts-node gateway/server.ts"
     },

@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [5.5.0] — 2026-07 — Production Packaging
+
+### Added
+
+- **Compiled Gateway Exports**: Gateway subpath exports now point to compiled `dist/gateway/*.js` instead of raw TypeScript source. Consumers can import `@splashcodex/api-key-manager/gateway/config` and get working JavaScript.
+- **Declaration Maps** (`.d.ts.map`): Better IDE "Go to Definition" experience — navigates to source instead of generated `.d.ts`.
+- **`.npmignore`**: Explicit exclusion of source, test, playground, IDE, and development files from the npm tarball.
+- **Package Metadata**: Added `repository`, `bugs`, `homepage`, `engines` (Node >= 18), `publishConfig`, and `sideEffects: false`.
+- **Build Clean Step**: `npm run clean` removes stale `dist/` before every build to prevent old artifacts.
+- **CI Package Verification**: `npm pack --dry-run` step in CI workflow to catch packaging regressions.
+- **Gateway Type Definitions**: `typesVersions` now includes `gateway/config`, `gateway/proxy`, and `gateway/middleware`.
+
+### Changed
+
+- **Build Command**: Now compiles both `src/` and `gateway/` via `tsc && tsc -p tsconfig.gateway.json`.
+- **`files` Array**: Now only includes `dist/`, `bin/`, `README.md`, and `CHANGELOG.md` — trimmed from shipping raw `src/` and `gateway/`.
+- **`prepublishOnly`**: Now runs `npm test` after build to enforce passing tests before any publish.
+- **`prepack`**: Added to ensure `dist/` is always fresh when packaging.
+- **`postinstall`**: Simplified to a one-line version banner.
+
+### Fixed
+
+- Gateway exports no longer resolve to `.ts` files that Node.js can't run (#broken-in-production).
+- `tsconfig.gateway.json` excludes `gateway/server.ts` (standalone app) to avoid `rootDir` conflicts with `src/` imports.
+
+---
+
 ## [5.4.0] — 2026-07 — Production-Hardened Gateway (Ecosystem Edition)
 
 ### Added
@@ -216,6 +243,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+[5.5.0]: https://github.com/SplashCodeDex/ApiKeyManager/compare/v5.4.0...v5.5.0
 [5.4.0]: https://github.com/SplashCodeDex/ApiKeyManager/compare/v5.3.0...v5.4.0
 [5.3.0]: https://github.com/SplashCodeDex/ApiKeyManager/compare/v5.2.0...v5.3.0
 [5.2.0]: https://github.com/SplashCodeDex/ApiKeyManager/compare/v5.1.0...v5.2.0
