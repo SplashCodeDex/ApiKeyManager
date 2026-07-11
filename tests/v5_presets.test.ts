@@ -1,5 +1,5 @@
 /**
- * Tests for v5.0 — Presets & Persistence
+ * Tests for v5.0+ — Presets & Persistence
  *
  * Tests the "batteries included" preset pattern:
  * - GeminiManager singleton with env parsing

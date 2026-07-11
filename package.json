@@ -120,7 +120,7 @@
         "build": "tsc",
         "test": "jest --verbose",
         "prepublishOnly": "npm run build",
-        "postinstall": "node -e \"console.log('\\n\\x1b[32m🌟 Successfully installed @splashcodex/api-key-manager v5.1!\\x1b[0m\\n\\x1b[36m📚 Documentation: https://www.npmjs.com/package/@splashcodex/ApiKeyManager\\x1b[0m\\n\\x1b[33m🚀 Quick Start:\\x1b[0m\\n   import { loadCentralEnv } from \\'@splashcodex/api-key-manager/env\\';\\n   import { GeminiManager } from \\'@splashcodex/api-key-manager/presets/gemini\\';\\n   loadCentralEnv();\\n   const gemini = GeminiManager.getInstance().data;\\n')\"",
+"postinstall": "node -e \"console.log('\\n\\x1b[32m🌟 Successfully installed @splashcodex/api-key-manager v5.4.0!\\x1b[0m\\n\\x1b[36m📚 Documentation: https://www.npmjs.com/package/@splashcodex/ApiKeyManager\\x1b[0m\\n\\x1b[33m🚀 Quick Start:\\x1b[0m\\n   import { loadCentralEnv } from \\'@splashcodex/api-key-manager/env\\';\\n   import { GeminiManager } from \\'@splashcodex/api-key-manager/presets/gemini\\';\\n   loadCentralEnv();\\n   const gemini = GeminiManager.getInstance().data;\\n')\"",
         "gateway": "ts-node gateway/server.ts",
         "gateway:dev": "npx nodemon --watch gateway/ --ext ts --exec ts-node gateway/server.ts"
     },

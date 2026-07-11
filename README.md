@@ -1,22 +1,25 @@
-# @splashcodex/ApiKeyManager v5.0 — Ecosystem Edition
+# @splashcodex/ApiKeyManager v5.4 — Ecosystem Edition
 
 > Universal API Key Management Gateway with Provider Presets, Built-in Persistence, and Multi-Provider Vault.
 
 [![npm version](https://img.shields.io/npm/v/@splashcodex/ApiKeyManager)](https://www.npmjs.com/package/@splashcodex/ApiKeyManager)
 
-## New in v5.3.0 (Resilience Upgrade)
-- **Bulkhead Queueing (`cockatiel`)** — Safely handle traffic spikes. Requests that exceed your `concurrency` limit are queued (up to `concurrencyQueueSize`) rather than immediately rejected!
-- **Strict Configuration Validation (`zod`)** — Deep runtime validation on all initialization options.
-- **Improved Gateway SSE Parser** — Uses `eventsource-parser` for 100% reliable Server-Sent Events proxying.
+## New in v5.4 (Production-Hardened Gateway)
 
-## Features in v5.0 (Ecosystem Edition)
+- **Per-App Rate Limiting** — Sliding-window rate limiter via `GATEWAY_RATE_LIMITS` env var, enforced by `x-app-id` header.
+- **Graceful Shutdown** — `SIGTERM`/`SIGINT` handlers cleanly close connections and destroy the key vault.
+- **Provider Extensibility** — Register custom providers at runtime via `GATEWAY_EXTRA_PROVIDERS` JSON env var without modifying code.
+- **Request Audit Trail** — `/v1/audit` endpoint with ring-buffer logging, filterable by app and provider.
+- **SSE Resilience** — Mid-stream error handling with structured `event: error` emissions — clients no longer hang on failures.
+
+## Features in v5.4 (Ecosystem Edition)
 
 - **Provider Presets** — One-line setup for `GeminiManager`, `OpenAIManager`, and `MultiManager`.
 - **Automatic Env Parsing** — Reads `GOOGLE_GEMINI_API_KEY`, `OPENAI_API_KEY`, etc. (supports JSON arrays and comma-separated strings) from any OS directory smoothly.
 - **Built-in Persistence** — `FileStorage` (survives restarts) and `MemoryStorage` included.
 - **Singleton Pattern** — Thread-safe singletons with `getInstance()` and `Result<T>` pattern.
 - **Multi-Provider Vault** — Manage multiple providers (`gemini`, `openai`, `anthropic`) from a single entry point.
-- **Centralized API Gateway** — Built-in Fastify proxy server to centralize AI requests for multiple apps securely.
+- **Centralized API Gateway** — Built-in Fastify transparent proxy server to centralize AI requests for multiple apps securely.
 
 ## Core Features
 

@@ -1,10 +1,13 @@
 /**
- * Universal ApiKeyManager v5.0 — Ecosystem Edition
+ * Universal ApiKeyManager v5.4 — Ecosystem Edition
  * Implements: Rotation, Circuit Breaker, Persistence, Exponential Backoff, Strategies,
  *             Event Emitter, Fallback, execute(), Timeout, Auto-Retry, Provider Tags,
  *             Health Checks, Bulkhead/Concurrency
- * NEW in v5.0: Provider Presets (GeminiManager, OpenAIManager, MultiManager),
- *              Built-in Persistence (FileStorage, MemoryStorage)
+ * NEW in v5.4: Production-hardened API Gateway with transparent proxy,
+ *              per-app rate limiting, graceful shutdown, provider extensibility,
+ *              request audit trail, and SSE error resilience.
+ * v5.0: Provider Presets (GeminiManager, OpenAIManager, MultiManager),
+ *       Built-in Persistence (FileStorage, MemoryStorage)
  * Gemini-Specific: finishReason handling, Safety blocks, RECITATION detection
  * Infrastructure: cockatiel (Bulkhead queueing + ExponentialBackoff w/ decorrelated jitter)
  */
