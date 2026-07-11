@@ -62,6 +62,18 @@
             "import": "./dist/persistence/memory.js",
             "require": "./dist/persistence/memory.js",
             "types": "./dist/persistence/memory.d.ts"
+        },
+        "./gateway/config": {
+            "import": "./gateway/config.ts",
+            "require": "./gateway/config.ts"
+        },
+        "./gateway/proxy": {
+            "import": "./gateway/proxy.ts",
+            "require": "./gateway/proxy.ts"
+        },
+        "./gateway/middleware": {
+            "import": "./gateway/middleware.ts",
+            "require": "./gateway/middleware.ts"
         }
     },
     "typesVersions": {
@@ -101,6 +113,7 @@
     "files": [
         "dist",
         "src",
+        "gateway",
         "bin"
     ],
     "scripts": {

@@ -78,13 +78,47 @@ npm run gateway
 # Server runs on http://localhost:9000
 ```
 
-3. Call the proxy from ANY language without managing keys in the client app:
+3. Call the **transparent proxy** from ANY language — use your official SDKs or raw HTTP, the gateway handles key injection behind the scenes:
+
 ```bash
-curl -X POST http://localhost:9000/v1/generate \
+# Gemini via Google's native API path
+curl -X POST "http://localhost:9000/gemini/v1beta/models/gemini-2.0-flash:generateContent" \
   -H "Content-Type: application/json" \
-  -d '{"provider": "gemini", "prompt": "Hello!"}'
+  -d '{"contents":[{"parts":[{"text":"Hello!"}]}]}'
+
+# OpenAI via the standard chat completions path
+curl -X POST "http://localhost:9000/openai/v1/chat/completions" \
+  -H "Content-Type: application/json" \
+  -H "x-app-id: my-frontend" \
+  -d '{"model":"gpt-4o","messages":[{"role":"user","content":"Hello!"}]}'
+
+# Streaming (Gemini)
+curl -X POST "http://localhost:9000/gemini/v1beta/models/gemini-2.0-flash:streamGenerateContent?alt=sse" \
+  -H "Content-Type: application/json" \
+  -d '{"contents":[{"parts":[{"text":"Tell me a story"}]}]}'
 ```
-Route supports both `/v1/generate` (Standard JSON) and `/v1/stream` (Server-Sent Events). Monitoring available at `/v1/health` and `/v1/providers`.
+
+**Transparent Proxy Architecture:** The gateway exposes `/:provider/*` routes (e.g. `/gemini/...`, `/openai/...`, `/anthropic/...`). You send the exact upstream API path, headers, and body — the gateway strips the provider prefix, injects the API key, and forwards to the real provider. Your client code doesn't need to know or manage API keys.
+
+**Rate Limiting (NEW):** Set per-app rate limits via `GATEWAY_RATE_LIMITS` env var:
+```bash
+export GATEWAY_RATE_LIMITS='{"my-frontend":{"requestsPerMin":100},"my-backend":{"requestsPerMin":500}}'
+```
+Apps identify themselves via the `x-app-id` request header.
+
+**Custom Providers (NEW):** Add providers at runtime without modifying code via `GATEWAY_EXTRA_PROVIDERS`:
+```bash
+export GATEWAY_EXTRA_PROVIDERS='[{"name":"deepseek","envKeys":["DEEPSEEK_API_KEY"],"baseUrl":"https://api.deepseek.com","models":{"deepseek-chat":"/v1/chat/completions"},"authStyle":"header","authKey":"Authorization","authPrefix":"Bearer "}]'
+```
+
+**Monitoring Endpoints:**
+
+| Endpoint | Description |
+|---|---|
+| `GET /v1/health` | Pool health across all providers (healthy/cooling/dead key counts, uptime) |
+| `GET /v1/providers` | Available providers, model names, and key counts |
+| `GET /v1/audit` | Recent request audit trail (filterable by `?app=` and `?provider=`) |
+| `GET /v1/rate-limits` | Active per-app rate limit configuration and current usage |
 
 ---
 

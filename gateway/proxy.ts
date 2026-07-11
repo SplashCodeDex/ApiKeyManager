@@ -6,7 +6,6 @@
  */
 
 import { ProviderDefinition } from './config';
-import { createParser, type ParsedEvent } from 'eventsource-parser';
 
 export interface TransparentProxyRequest {
     provider: string;
@@ -40,6 +39,69 @@ function sanitizeHeaders(incoming: Record<string, string>): Record<string, strin
 }
 
 /**
+ * Determines if a request should be treated as a streaming request.
+ * Consolidated logic across all supported providers.
+ */
+export function isStreamRequest(providerName: string, path: string, headers: Record<string, string>, body?: any): boolean {
+    // Gemini: alt=sse query parameter
+    if (providerName === 'gemini' && path.includes('?alt=sse')) return true;
+
+    // Gemini / OpenAI: 'stream: true' in the request body
+    if (body && typeof body === 'object' && body.stream === true) return true;
+
+    // Anthropic: server-sent events as a query param or by body property
+    if (providerName === 'anthropic') {
+        if (path.includes('?stream=true')) return true;
+        if (body && typeof body === 'object' && (body.stream === true || body.stream === 'sse')) return true;
+    }
+
+    // Generic SSE detection by Accept / Cache-Control hints from downstream clients
+    const acceptHeader = headers['accept'] || headers['Accept'] || '';
+    if (acceptHeader.includes('text/event-stream')) return true;
+
+    return false;
+}
+
+/**
+ * Builds a URL and injects the API key according to provider auth style.
+ */
+export function buildUpstreamUrl(
+    providerDef: ProviderDefinition,
+    path: string,
+    key: string
+): string {
+    let url = `${providerDef.baseUrl}${path}`;
+    if (providerDef.authStyle === 'query') {
+        url += `${url.includes('?') ? '&' : '?'}${providerDef.authKey}=${encodeURIComponent(key)}`;
+    }
+    return url;
+}
+
+/**
+ * Builds request headers, injecting the API key per provider auth style
+ * and applying provider-specific required headers.
+ */
+export function buildUpstreamHeaders(
+    providerDef: ProviderDefinition,
+    incomingHeaders: Record<string, string>,
+    key: string
+): Record<string, string> {
+    const headers = sanitizeHeaders(incomingHeaders);
+
+    if (providerDef.authStyle === 'header') {
+        headers[providerDef.authKey] = `${providerDef.authPrefix || ''}${key}`;
+    }
+    // query-style keys go in the URL, not headers — already handled by buildUpstreamUrl
+
+    // Anthropic requires a version header on all requests
+    if (providerDef.name === 'anthropic' && !headers['anthropic-version']) {
+        headers['anthropic-version'] = '2023-06-01';
+    }
+
+    return headers;
+}
+
+/**
  * Creates the callback function that MultiManager.execute() will call for a standard request.
  * This is where the magic happens — the key is injected by the manager.
  */
@@ -48,21 +110,8 @@ export function createProxyFn(
     req: TransparentProxyRequest
 ): (key: string) => Promise<ProxyResponse> {
     return async (key: string): Promise<ProxyResponse> => {
-        // Build the transparent URL
-        let url = `${providerDef.baseUrl}${req.path}`;
-        const headers = sanitizeHeaders(req.headers);
-
-        // Inject the API key
-        if (providerDef.authStyle === 'query') {
-            url += `${url.includes('?') ? '&' : '?'}${providerDef.authKey}=${key}`;
-        } else {
-            headers[providerDef.authKey] = `${providerDef.authPrefix || ''}${key}`;
-        }
-
-        // Anthropic requires a version header on all requests
-        if (providerDef.name === 'anthropic' && !headers['anthropic-version']) {
-            headers['anthropic-version'] = '2023-06-01';
-        }
+        const url = buildUpstreamUrl(providerDef, req.path, key);
+        const headers = buildUpstreamHeaders(providerDef, req.headers, key);
 
         const fetchOpts: RequestInit = {
             method: req.method,
@@ -93,7 +142,7 @@ export function createProxyFn(
         let body = text;
         try {
             body = JSON.parse(text);
-        } catch { }
+        } catch { /* not JSON, return as raw text */ }
 
         return {
             success: true,
@@ -115,18 +164,8 @@ export function createStreamProxyFn(
     req: TransparentProxyRequest
 ): (key: string) => AsyncGenerator<Uint8Array, void, unknown> {
     return async function* (key: string): AsyncGenerator<Uint8Array, void, unknown> {
-        let url = `${providerDef.baseUrl}${req.path}`;
-        const headers = sanitizeHeaders(req.headers);
-
-        if (providerDef.authStyle === 'query') {
-            url += `${url.includes('?') ? '&' : '?'}${providerDef.authKey}=${key}`;
-        } else {
-            headers[providerDef.authKey] = `${providerDef.authPrefix || ''}${key}`;
-        }
-
-        if (providerDef.name === 'anthropic' && !headers['anthropic-version']) {
-            headers['anthropic-version'] = '2023-06-01';
-        }
+        const url = buildUpstreamUrl(providerDef, req.path, key);
+        const headers = buildUpstreamHeaders(providerDef, req.headers, key);
 
         const fetchOpts: RequestInit = { method: req.method, headers };
         if (req.method !== 'GET' && req.method !== 'HEAD' && req.body) {
@@ -157,4 +196,21 @@ export function createStreamProxyFn(
             reader.releaseLock();
         }
     };
+}
+
+/**
+ * Emits a structured SSE error event as raw Uint8Array bytes.
+ * Used when an error occurs mid-stream (headers already sent) to signal
+ * the client gracefully instead of leaving them hanging.
+ */
+export function sseErrorChunk(message: string): Uint8Array {
+    const payload = `event: error\ndata: ${JSON.stringify({ error: message })}\n\n`;
+    return new TextEncoder().encode(payload);
+}
+
+/**
+ * Emits the SSE terminal "done" signal.
+ */
+export function sseDoneChunk(): Uint8Array {
+    return new TextEncoder().encode('data: [DONE]\n\n');
 }

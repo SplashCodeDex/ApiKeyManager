@@ -16,8 +16,15 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import { MultiManager } from '../src/presets/multi';
 import { loadConfig, ProviderDefinition } from './config';
-import { createProxyFn, createStreamProxyFn, TransparentProxyRequest } from './proxy';
-import { getAppId, sendError, log } from './middleware';
+import {
+    createProxyFn,
+    createStreamProxyFn,
+    isStreamRequest,
+    sseErrorChunk,
+    sseDoneChunk,
+    TransparentProxyRequest,
+} from './proxy';
+import { getAppId, sendError, log, RateLimiter } from './middleware';
 
 // ─── Load centralized env FIRST (before anything reads process.env) ─────────
 const envResult = loadCentralEnv();
@@ -55,6 +62,37 @@ if (!managerResult.success) {
 
 const vault = managerResult.data;
 
+// ─── Rate Limiter (per-app sliding window) ───────────────────────────────────
+
+const rateLimiter = new RateLimiter(config.rateLimits);
+if (Object.keys(config.rateLimits).length > 0) {
+    console.log(`\x1b[36m[gateway]\x1b[0m Per-app rate limits configured for: ${Object.keys(config.rateLimits).join(', ')}`);
+}
+
+// ─── Audit Trail (in-memory ring buffer for recent requests) ─────────────────
+
+interface AuditEntry {
+    timestamp: string;
+    appId: string;
+    provider: string;
+    method: string;
+    path: string;
+    isStream: boolean;
+    statusCode: number | null;
+    latencyMs: number | null;
+    error: string | null;
+}
+
+const auditLog: AuditEntry[] = [];
+const MAX_AUDIT_ENTRIES = 10_000;
+
+function recordAudit(entry: AuditEntry): void {
+    auditLog.push(entry);
+    if (auditLog.length > MAX_AUDIT_ENTRIES) {
+        auditLog.splice(0, auditLog.length - MAX_AUDIT_ENTRIES);
+    }
+}
+
 // ─── Fastify App ─────────────────────────────────────────────────────────────
 
 const app = Fastify({ logger: false });
@@ -67,7 +105,7 @@ app.all('/:provider/*', async (request, reply) => {
     const appId = getAppId(request);
     const params = request.params as { provider: string; '*': string };
     const provider = params.provider;
-    
+
     // Reconstruct the upstream path and query string
     const queryIndex = request.raw.url.indexOf('?');
     const queryString = queryIndex !== -1 ? request.raw.url.substring(queryIndex) : '';
@@ -75,11 +113,13 @@ app.all('/:provider/*', async (request, reply) => {
 
     const providerDef = providerMap.get(provider);
     if (!providerDef) {
-        // Fallback for missing provider or unmatched route
+        // Fallback for unmatched routes — inform about transparent proxy upgrade
         if (provider === 'v1' && (params['*'] === 'generate' || params['*'] === 'stream')) {
-            return sendError(reply, 400, 'The gateway has been upgraded to a transparent proxy. Please use /gemini/* or /openai/* directly with the official SDKs.');
+            return sendError(reply, 400,
+                'The gateway has been upgraded to a transparent proxy. Please use /gemini/* or /openai/* directly with the official SDKs.');
         }
-        return sendError(reply, 400, `Unknown provider "${provider}". Available: ${[...providerMap.keys()].join(', ')}`);
+        return sendError(reply, 400,
+            `Unknown provider "${provider}". Available: ${[...providerMap.keys()].join(', ')}`);
     }
 
     const proxyReq: TransparentProxyRequest = {
@@ -90,7 +130,30 @@ app.all('/:provider/*', async (request, reply) => {
         body: request.body,
     };
 
-    const isStream = path.includes('?alt=sse') || (request.body && (request.body as any).stream === true);
+    const isStream = isStreamRequest(provider, path, proxyReq.headers, request.body);
+
+    // ── Rate limit check ──────────────────────────────────────────────────
+    const rateResult = rateLimiter.check(appId);
+    if (!rateResult.allowed) {
+        log('warn', appId, `⛔ Rate limited (reset in ${Math.ceil((rateResult.resetAt - Date.now()) / 1000)}s)`);
+        return sendError(reply, 429, 'Rate limit exceeded. Please slow down.', {
+            retryAfterMs: Math.max(0, rateResult.resetAt - Date.now()),
+        });
+    }
+
+    const auditEntry: AuditEntry = {
+        timestamp: new Date().toISOString(),
+        appId,
+        provider,
+        method: request.method,
+        path,
+        isStream,
+        statusCode: null,
+        latencyMs: null,
+        error: null,
+    };
+
+    const startTime = Date.now();
 
     try {
         if (isStream) {
@@ -108,15 +171,32 @@ app.all('/:provider/*', async (request, reply) => {
                 timeoutMs: 60_000,
             });
 
-            for await (const chunk of stream) {
-                reply.raw.write(chunk);
-            }
+            try {
+                for await (const chunk of stream) {
+                    reply.raw.write(chunk);
+                }
 
-            reply.raw.end();
-            log('info', appId, `← STREAM complete`);
+                // Graceful termination — emit [DONE] marker for SSE-compliant clients
+                reply.raw.write(sseDoneChunk());
+                reply.raw.end();
+
+                auditEntry.statusCode = 200;
+                auditEntry.latencyMs = Date.now() - startTime;
+                log('info', appId, `← STREAM complete ${auditEntry.latencyMs}ms`);
+            } catch (streamErr: any) {
+                // Headers already sent — emit structured SSE error so the client doesn't hang
+                log('error', appId, `✗ STREAM error: ${streamErr.message}`);
+                try {
+                    reply.raw.write(sseErrorChunk(streamErr.message));
+                    reply.raw.write(sseDoneChunk());
+                } catch { /* connection may already be closed */ }
+                reply.raw.end();
+
+                auditEntry.error = streamErr.message;
+            }
         } else {
-            log('info', appId, `→ ${provider} ${path}`);
-            
+            log('info', appId, `→ ${provider} ${request.method} ${path}`);
+
             const proxyFn = createProxyFn(providerDef, proxyReq);
             const result = await vault.execute(proxyFn, {
                 provider,
@@ -125,7 +205,7 @@ app.all('/:provider/*', async (request, reply) => {
             });
 
             reply.status(result.statusCode);
-            
+
             // Forward safe headers
             for (const [k, v] of Object.entries(result.headers)) {
                 if (k.toLowerCase() !== 'transfer-encoding' && k.toLowerCase() !== 'content-encoding') {
@@ -134,15 +214,28 @@ app.all('/:provider/*', async (request, reply) => {
             }
 
             reply.send(result.body);
+
+            auditEntry.statusCode = result.statusCode;
+            auditEntry.latencyMs = result.latencyMs;
             log('info', appId, `← ${result.provider} ${result.latencyMs}ms`);
         }
     } catch (err: any) {
         log('error', appId, `✗ ${err.message}`);
+        auditEntry.error = err.message;
+        auditEntry.statusCode = err.status || null;
+
         if (!reply.raw.headersSent) {
             return sendError(reply, err.status || 502, err.message);
         } else {
+            // Headers already sent (streaming race) — emit SSE error and close
+            try {
+                reply.raw.write(sseErrorChunk(err.message));
+                reply.raw.write(sseDoneChunk());
+            } catch { /* connection already closed */ }
             reply.raw.end();
         }
+    } finally {
+        recordAudit(auditEntry);
     }
 });
 
@@ -183,6 +276,50 @@ app.get('/v1/providers', async (_request, reply) => {
     return reply.send({ providers: details });
 });
 
+// ─── GET /v1/audit ───────────────────────────────────────────────────────────
+
+app.get('/v1/audit', async (request, reply) => {
+    const limit = Math.min(parseInt((request.query as any)?.limit || '100', 10), 1000);
+    const appFilter = (request.query as any)?.app as string | undefined;
+    const providerFilter = (request.query as any)?.provider as string | undefined;
+
+    let filtered = auditLog.slice(-limit).reverse();
+    if (appFilter) {
+        filtered = filtered.filter((e) => e.appId === appFilter);
+    }
+    if (providerFilter) {
+        filtered = filtered.filter((e) => e.provider === providerFilter);
+    }
+
+    return reply.send({ count: filtered.length, total: auditLog.length, entries: filtered });
+});
+
+// ─── GET /v1/rate-limits ─────────────────────────────────────────────────────
+
+app.get('/v1/rate-limits', async (_request, reply) => {
+    const limits = rateLimiter.getLimits();
+    const snapshot = rateLimiter.getSnapshot();
+    return reply.send({ limits, usage: snapshot });
+});
+
+// ─── Graceful Shutdown ───────────────────────────────────────────────────────
+
+async function shutdown(signal: string) {
+    console.log(`\n\x1b[33m[gateway] Received ${signal}. Shutting down gracefully...\x1b[0m`);
+    try {
+        vault.destroy();
+        await app.close();
+        console.log('\x1b[32m[gateway] Server closed cleanly.\x1b[0m');
+    } catch (err) {
+        console.error('\x1b[31m[gateway] Error during shutdown:\x1b[0m', err);
+    } finally {
+        process.exit(0);
+    }
+}
+
+process.once('SIGTERM', () => shutdown('SIGTERM'));
+process.once('SIGINT', () => shutdown('SIGINT'));
+
 // ─── Start Server ────────────────────────────────────────────────────────────
 
 async function start() {
@@ -197,6 +334,8 @@ async function start() {
         console.log(`\x1b[36m   Server:     http://localhost:${config.port}\x1b[0m`);
         console.log(`\x1b[36m   Health:     http://localhost:${config.port}/v1/health\x1b[0m`);
         console.log(`\x1b[36m   Providers:  http://localhost:${config.port}/v1/providers\x1b[0m`);
+        console.log(`\x1b[36m   Audit Log:  http://localhost:${config.port}/v1/audit\x1b[0m`);
+        console.log(`\x1b[36m   Rate Limit: http://localhost:${config.port}/v1/rate-limits\x1b[0m`);
         console.log('');
 
         const providers = vault.getProviders();
