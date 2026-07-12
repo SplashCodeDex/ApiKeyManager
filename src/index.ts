@@ -26,7 +26,7 @@ import { z } from 'zod';
 // ─── Re-exports: Persistence ─────────────────────────────────────────────────
 // Persistence adapters can be imported from root or via subpath
 export { FileStorage } from './persistence/file';
-export type { FileStorageOptions } from './persistence/file';
+export type { FileStorageOptions, EncryptionOptions } from './persistence/file';
 export { MemoryStorage } from './persistence/memory';
 
 // ─── Presets ─────────────────────────────────────────────────────────────────
@@ -37,15 +37,13 @@ export { MemoryStorage } from './persistence/memory';
 // Or import all at once:
 //   import { GeminiManager, OpenAIManager, MultiManager } from '@splashcodex/api-key-manager/presets';
 
-
-
 // ─── Interfaces & Types ──────────────────────────────────────────────────────
 
 export interface KeyState {
     key: string;
-    failCount: number;           // Consecutive failures
-    failedAt: number | null;     // Timestamp of last failure
-    isQuotaError: boolean;       // Was last error a 429?
+    failCount: number; // Consecutive failures
+    failedAt: number | null; // Timestamp of last failure
+    isQuotaError: boolean; // Was last error a 429?
     circuitState: 'CLOSED' | 'OPEN' | 'HALF_OPEN' | 'DEAD';
     lastUsed: number;
     successCount: number;
@@ -53,23 +51,23 @@ export interface KeyState {
     halfOpenTestTime: number | null;
     customCooldown: number | null; // From Retry-After header
     // v2.0 Stats
-    weight: number;              // 0.0 - 1.0 (Default 1.0)
-    averageLatency: number;      // Rolling average latency in ms
-    totalLatency: number;        // Sum of all latency checks (for calculating average)
-    latencySamples: number;      // Number of samples
+    weight: number; // 0.0 - 1.0 (Default 1.0)
+    averageLatency: number; // Rolling average latency in ms
+    totalLatency: number; // Sum of all latency checks (for calculating average)
+    latencySamples: number; // Number of samples
     // v3.0 Fields
-    provider: string;            // Provider tag (e.g. 'openai', 'gemini')
+    provider: string; // Provider tag (e.g. 'openai', 'gemini')
 }
 
 export type ErrorType =
-    | 'QUOTA'       // 429 - Rotate key, respect cooldown
-    | 'TRANSIENT'   // 500/503/504 - Retry with backoff
-    | 'AUTH'        // 403 - Key is dead, remove from pool
+    | 'QUOTA' // 429 - Rotate key, respect cooldown
+    | 'TRANSIENT' // 500/503/504 - Retry with backoff
+    | 'AUTH' // 403 - Key is dead, remove from pool
     | 'BAD_REQUEST' // 400 - Do not retry, fix request
-    | 'SAFETY'      // finishReason: SAFETY - Not a key issue
-    | 'RECITATION'  // finishReason: RECITATION - Not a key issue
-    | 'TIMEOUT'     // Request timed out
-    | 'UNKNOWN';    // Catch-all
+    | 'SAFETY' // finishReason: SAFETY - Not a key issue
+    | 'RECITATION' // finishReason: RECITATION - Not a key issue
+    | 'TIMEOUT' // Request timed out
+    | 'UNKNOWN'; // Catch-all
 
 export interface ErrorClassification {
     type: ErrorType;
@@ -87,34 +85,41 @@ export interface ApiKeyManagerStats {
 }
 
 export interface ExecuteOptions {
-    timeoutMs?: number;      // Timeout per attempt in ms
-    maxRetries?: number;     // Max retry attempts (default: 0 = no retry)
-    finishReason?: string;   // For Gemini finishReason handling
-    provider?: string;       // Filter keys by provider (e.g. 'openai')
+    timeoutMs?: number; // Timeout per attempt in ms
+    maxRetries?: number; // Max retry attempts (default: 0 = no retry)
+    finishReason?: string; // For Gemini finishReason handling
+    provider?: string; // Filter keys by provider (e.g. 'openai')
 }
 
-export const ApiKeyManagerOptionsSchema = z.object({
-    storage: z.any().optional(),
-    strategy: z.any().optional(), // Expected: LoadBalancingStrategy
-    fallbackFn: z.custom<() => any>((val) => typeof val === 'function', 'Must be a function').optional(),
-    /** Max concurrent execute() calls. When limit is reached, excess requests queue (up to concurrencyQueueSize) then reject. */
-    concurrency: z.number().int().positive().optional(),
-    /**
-     * Maximum number of requests to hold in the bulkhead queue when all concurrency slots are busy.
-     * - Default: `0` — excess requests are rejected immediately (preserves v3 behavior).
-     * - Set to a positive number to allow requests to wait for a free slot.
-     *
-     * @example
-     * // Queue up to 10 waiting requests before rejecting
-     * new ApiKeyManager(keys, { concurrency: 5, concurrencyQueueSize: 10 })
-     */
-    concurrencyQueueSize: z.number().int().nonnegative().optional(),
-    semanticCache: z.object({
-        threshold: z.number().min(0).max(1).optional(),  // Similarity threshold (0.0 - 1.0, default 0.95)
-        ttlMs: z.number().int().positive().optional(),      // Cache TTL
-        getEmbedding: z.custom<(text: string) => Promise<number[]>>((val) => typeof val === 'function', 'Must be a function'),
-    }).optional(),
-}).passthrough();
+export const ApiKeyManagerOptionsSchema = z
+    .object({
+        storage: z.any().optional(),
+        strategy: z.any().optional(), // Expected: LoadBalancingStrategy
+        fallbackFn: z.custom<() => any>((val) => typeof val === 'function', 'Must be a function').optional(),
+        /** Max concurrent execute() calls. When limit is reached, excess requests queue (up to concurrencyQueueSize) then reject. */
+        concurrency: z.number().int().positive().optional(),
+        /**
+         * Maximum number of requests to hold in the bulkhead queue when all concurrency slots are busy.
+         * - Default: `0` — excess requests are rejected immediately (preserves v3 behavior).
+         * - Set to a positive number to allow requests to wait for a free slot.
+         *
+         * @example
+         * // Queue up to 10 waiting requests before rejecting
+         * new ApiKeyManager(keys, { concurrency: 5, concurrencyQueueSize: 10 })
+         */
+        concurrencyQueueSize: z.number().int().nonnegative().optional(),
+        semanticCache: z
+            .object({
+                threshold: z.number().min(0).max(1).optional(), // Similarity threshold (0.0 - 1.0, default 0.95)
+                ttlMs: z.number().int().positive().optional(), // Cache TTL
+                getEmbedding: z.custom<(text: string) => Promise<number[]>>(
+                    (val) => typeof val === 'function',
+                    'Must be a function',
+                ),
+            })
+            .optional(),
+    })
+    .passthrough();
 
 export type ApiKeyManagerOptions = z.infer<typeof ApiKeyManagerOptionsSchema>;
 
@@ -146,13 +151,13 @@ export interface ApiKeyManagerEventMap {
 
 const CONFIG = {
     MAX_CONSECUTIVE_FAILURES: 5,
-    COOLDOWN_TRANSIENT: 60 * 1000,        // 1 minute
-    COOLDOWN_QUOTA: 5 * 60 * 1000,        // 5 minutes (default if no Retry-After)
+    COOLDOWN_TRANSIENT: 60 * 1000, // 1 minute
+    COOLDOWN_QUOTA: 5 * 60 * 1000, // 5 minutes (default if no Retry-After)
     COOLDOWN_QUOTA_DAILY: 60 * 60 * 1000, // 1 hour for RPD exhaustion
-    HALF_OPEN_TEST_DELAY: 60 * 1000,      // 1 minute after open
-    MAX_BACKOFF: 64 * 1000,               // 64 seconds max
-    BASE_BACKOFF: 1000,                   // 1 second base
-    DEAD_KEY_TTL: 60 * 60 * 1000,        // 1 hour — DEAD keys get retested after this
+    HALF_OPEN_TEST_DELAY: 60 * 1000, // 1 minute after open
+    MAX_BACKOFF: 64 * 1000, // 64 seconds max
+    BASE_BACKOFF: 1000, // 1 second base
+    DEAD_KEY_TTL: 60 * 60 * 1000, // 1 hour — DEAD keys get retested after this
 };
 
 // Error classification patterns
@@ -261,12 +266,12 @@ export class SemanticCache {
 
     public set(prompt: string, vector: number[], response: any) {
         // Expire old entry for same prompt if exists
-        this.entries = this.entries.filter(e => e.prompt !== prompt);
+        this.entries = this.entries.filter((e) => e.prompt !== prompt);
         this.entries.push({
             prompt,
             vector,
             response,
-            timestamp: Date.now()
+            timestamp: Date.now(),
         });
         // Optional: Cap size to prevent memory leaks
         if (this.entries.length > 500) this.entries.shift();
@@ -343,49 +348,35 @@ export class ApiKeyManager extends EventEmitter {
     private _isResolvingEmbedding: boolean = false; // Recursion guard
 
     /**
-     * Constructor supports both legacy positional args and new options object.
+     * Constructor accepts an options object for configuration.
      *
-     * @example Legacy (v1/v2 — still works):
-     *   new ApiKeyManager(['key1', 'key2'], storage, strategy)
-     *
-     * @example New (v3):
+     * @example
      *   new ApiKeyManager(keys, { storage, strategy, fallbackFn, concurrency })
      */
     constructor(
         initialKeys: string[] | { key: string; weight?: number; provider?: string }[],
-        storageOrOptions?: any | ApiKeyManagerOptions,
-        strategy?: LoadBalancingStrategy
+        options?: ApiKeyManagerOptions,
     ) {
         super();
 
-        // Detect if second arg is options object or legacy storage
-        let options: ApiKeyManagerOptions = {};
-        if (storageOrOptions && typeof storageOrOptions === 'object' && ('storage' in storageOrOptions || 'strategy' in storageOrOptions || 'fallbackFn' in storageOrOptions || 'concurrency' in storageOrOptions || 'concurrencyQueueSize' in storageOrOptions || 'semanticCache' in storageOrOptions)) {
-            // New v3 options object
-            options = storageOrOptions as ApiKeyManagerOptions;
-        } else {
-            // Legacy positional args
-            options = {
-                storage: storageOrOptions,
-                strategy: strategy,
-            };
-        }
+        // Normalize to options object
+        let opts: ApiKeyManagerOptions = options ?? {};
 
         // Validate options with Zod (will throw meaningful errors on invalid configs)
-        options = ApiKeyManagerOptionsSchema.parse(options);
+        opts = ApiKeyManagerOptionsSchema.parse(opts);
 
-        this.storage = options.storage || {
+        this.storage = opts.storage || {
             getItem: () => null,
-            setItem: () => { },
+            setItem: () => {},
         };
-        this.strategy = options.strategy || new StandardStrategy();
-        this.fallbackFn = options.fallbackFn;
+        this.strategy = opts.strategy || new StandardStrategy();
+        this.fallbackFn = opts.fallbackFn;
 
         // Build cockatiel bulkhead.
         // queueSize defaults to 0 (immediate rejection — preserves existing API contract).
         // Set concurrencyQueueSize > 0 to opt-in to queuing instead of rejection.
-        const maxConcurrency = options.concurrency ?? Infinity;
-        const queueSize = options.concurrencyQueueSize ?? 0;
+        const maxConcurrency = opts.concurrency ?? Infinity;
+        const queueSize = opts.concurrencyQueueSize ?? 0;
         if (maxConcurrency !== Infinity) {
             this.bulkheadPolicy = cockatielBulkhead(maxConcurrency, queueSize);
             this.bulkheadPolicy.onReject(() => {
@@ -394,25 +385,24 @@ export class ApiKeyManager extends EventEmitter {
         }
 
         // Init Semantic Cache if provided
-        if (options.semanticCache) {
-            this.semanticCache = new SemanticCache(
-                options.semanticCache.threshold,
-                options.semanticCache.ttlMs
-            );
-            this.getEmbeddingFn = options.semanticCache.getEmbedding;
+        if (opts.semanticCache) {
+            this.semanticCache = new SemanticCache(opts.semanticCache.threshold, opts.semanticCache.ttlMs);
+            this.getEmbeddingFn = opts.semanticCache.getEmbedding;
         }
 
         // Normalize input to objects
         let inputKeys: { key: string; weight?: number; provider?: string }[] = [];
         if (initialKeys.length > 0 && typeof initialKeys[0] === 'string') {
-            inputKeys = (initialKeys as string[]).flatMap(k => k.split(',').map(s => ({ key: s.trim(), weight: 1.0, provider: 'default' })));
+            inputKeys = (initialKeys as string[]).flatMap((k) =>
+                k.split(',').map((s) => ({ key: s.trim(), weight: 1.0, provider: 'default' })),
+            );
         } else {
             inputKeys = initialKeys as { key: string; weight?: number; provider?: string }[];
         }
 
         // Deduplicate
         const uniqueMap = new Map<string, { weight: number; provider: string }>();
-        inputKeys.forEach(k => {
+        inputKeys.forEach((k) => {
             if (k.key.length > 0) uniqueMap.set(k.key, { weight: k.weight ?? 1.0, provider: k.provider ?? 'default' });
         });
 
@@ -451,12 +441,20 @@ export class ApiKeyManager extends EventEmitter {
         const message = error?.message || error?.error?.message || String(error);
 
         // 1. Check finishReason first
-        if (finishReason === 'SAFETY') return { type: 'SAFETY', retryable: false, cooldownMs: 0, markKeyFailed: false, markKeyDead: false };
-        if (finishReason === 'RECITATION') return { type: 'RECITATION', retryable: false, cooldownMs: 0, markKeyFailed: false, markKeyDead: false };
+        if (finishReason === 'SAFETY')
+            return { type: 'SAFETY', retryable: false, cooldownMs: 0, markKeyFailed: false, markKeyDead: false };
+        if (finishReason === 'RECITATION')
+            return { type: 'RECITATION', retryable: false, cooldownMs: 0, markKeyFailed: false, markKeyDead: false };
 
         // 2. Check timeout
         if (error instanceof TimeoutError || error?.name === 'TimeoutError') {
-            return { type: 'TIMEOUT', retryable: true, cooldownMs: CONFIG.COOLDOWN_TRANSIENT, markKeyFailed: true, markKeyDead: false };
+            return {
+                type: 'TIMEOUT',
+                retryable: true,
+                cooldownMs: CONFIG.COOLDOWN_TRANSIENT,
+                markKeyFailed: true,
+                markKeyDead: false,
+            };
         }
 
         // 3. Check HTTP status codes
@@ -470,23 +468,34 @@ export class ApiKeyManager extends EventEmitter {
                 retryable: true,
                 cooldownMs: retryAfter || CONFIG.COOLDOWN_QUOTA,
                 markKeyFailed: true,
-                markKeyDead: false
+                markKeyDead: false,
             };
         }
         if (status === 400 || ERROR_PATTERNS.isBadRequest.test(message)) {
             return { type: 'BAD_REQUEST', retryable: false, cooldownMs: 0, markKeyFailed: false, markKeyDead: false };
         }
         if (ERROR_PATTERNS.isTransient.test(message) || [500, 502, 503, 504].includes(status)) {
-            return { type: 'TRANSIENT', retryable: true, cooldownMs: CONFIG.COOLDOWN_TRANSIENT, markKeyFailed: true, markKeyDead: false };
+            return {
+                type: 'TRANSIENT',
+                retryable: true,
+                cooldownMs: CONFIG.COOLDOWN_TRANSIENT,
+                markKeyFailed: true,
+                markKeyDead: false,
+            };
         }
 
-        return { type: 'UNKNOWN', retryable: true, cooldownMs: CONFIG.COOLDOWN_TRANSIENT, markKeyFailed: true, markKeyDead: false };
+        return {
+            type: 'UNKNOWN',
+            retryable: true,
+            cooldownMs: CONFIG.COOLDOWN_TRANSIENT,
+            markKeyFailed: true,
+            markKeyDead: false,
+        };
     }
 
     private parseRetryAfter(error: any): number | null {
-        const retryAfter = error?.response?.headers?.['retry-after'] ||
-            error?.headers?.['retry-after'] ||
-            error?.retryAfter;
+        const retryAfter =
+            error?.response?.headers?.['retry-after'] || error?.headers?.['retry-after'] || error?.retryAfter;
 
         if (!retryAfter) return null;
 
@@ -527,11 +536,11 @@ export class ApiKeyManager extends EventEmitter {
 
     public getKey(): string | null {
         // 1. Filter out dead and cooling down keys
-        const candidates = this.keys.filter(k => k.circuitState !== 'DEAD' && !this.isOnCooldown(k));
+        const candidates = this.keys.filter((k) => k.circuitState !== 'DEAD' && !this.isOnCooldown(k));
 
         if (candidates.length === 0) {
             // FALLBACK: Return oldest failed key (excluding DEAD)
-            const nonDead = this.keys.filter(k => k.circuitState !== 'DEAD');
+            const nonDead = this.keys.filter((k) => k.circuitState !== 'DEAD');
             if (nonDead.length === 0) {
                 this.emit('allKeysExhausted');
                 return null;
@@ -554,8 +563,8 @@ export class ApiKeyManager extends EventEmitter {
      * Get a key filtered by provider tag
      */
     public getKeyByProvider(provider: string): string | null {
-        const candidates = this.keys.filter(k =>
-            k.provider === provider && k.circuitState !== 'DEAD' && !this.isOnCooldown(k)
+        const candidates = this.keys.filter(
+            (k) => k.provider === provider && k.circuitState !== 'DEAD' && !this.isOnCooldown(k),
         );
 
         if (candidates.length === 0) return null;
@@ -570,7 +579,7 @@ export class ApiKeyManager extends EventEmitter {
     }
 
     public getKeyCount(): number {
-        return this.keys.filter(k => k.circuitState !== 'DEAD').length;
+        return this.keys.filter((k) => k.circuitState !== 'DEAD').length;
     }
 
     // ─── Mark Success / Failed ───────────────────────────────────────────────
@@ -580,7 +589,7 @@ export class ApiKeyManager extends EventEmitter {
      * @param durationMs Duration of the request in milliseconds
      */
     public markSuccess(key: string, durationMs?: number) {
-        const k = this.keys.find(x => x.key === key);
+        const k = this.keys.find((x) => x.key === key);
         if (!k) return;
 
         const wasRecovering = k.circuitState !== 'CLOSED' && k.circuitState !== 'DEAD';
@@ -607,7 +616,7 @@ export class ApiKeyManager extends EventEmitter {
     }
 
     public markFailed(key: string, classification: ErrorClassification) {
-        const k = this.keys.find(x => x.key === key);
+        const k = this.keys.find((x) => x.key === key);
         if (!k || k.circuitState === 'DEAD') return;
         if (!classification.markKeyFailed) return;
 
@@ -634,16 +643,6 @@ export class ApiKeyManager extends EventEmitter {
             }
         }
         this.saveState();
-    }
-
-    public markFailedLegacy(key: string, isQuota: boolean = false) {
-        this.markFailed(key, {
-            type: isQuota ? 'QUOTA' : 'TRANSIENT',
-            retryable: true,
-            cooldownMs: isQuota ? CONFIG.COOLDOWN_QUOTA : CONFIG.COOLDOWN_TRANSIENT,
-            markKeyFailed: true,
-            markKeyDead: false,
-        });
     }
 
     // ─── Backoff ─────────────────────────────────────────────────────────────
@@ -679,13 +678,15 @@ export class ApiKeyManager extends EventEmitter {
 
     public getStats(): ApiKeyManagerStats {
         const total = this.keys.length;
-        const dead = this.keys.filter(k => k.circuitState === 'DEAD').length;
-        const cooling = this.keys.filter(k => k.circuitState === 'OPEN' || k.circuitState === 'HALF_OPEN').length;
+        const dead = this.keys.filter((k) => k.circuitState === 'DEAD').length;
+        const cooling = this.keys.filter((k) => k.circuitState === 'OPEN' || k.circuitState === 'HALF_OPEN').length;
         const healthy = total - dead - cooling;
         return { total, healthy, cooling, dead };
     }
 
-    public _getKeys(): KeyState[] { return this.keys; }
+    public _getKeys(): KeyState[] {
+        return this.keys;
+    }
 
     // ─── execute() Wrapper ───────────────────────────────────────────────────
 
@@ -700,7 +701,7 @@ export class ApiKeyManager extends EventEmitter {
      */
     public async execute<T>(
         fn: (key: string, signal?: AbortSignal) => Promise<T>,
-        options?: ExecuteOptions & { prompt?: string }
+        options?: ExecuteOptions & { prompt?: string },
     ): Promise<T> {
         const maxRetries = options?.maxRetries ?? 0;
         const timeoutMs = options?.timeoutMs;
@@ -734,7 +735,15 @@ export class ApiKeyManager extends EventEmitter {
         if (this.bulkheadPolicy) {
             try {
                 const result = await this.bulkheadPolicy.execute(async () => {
-                    return await this._executeWithSemanticAndRetry<T>(fn, maxRetries, timeoutMs, finishReason, provider, prompt, currentPromptVector);
+                    return await this._executeWithSemanticAndRetry<T>(
+                        fn,
+                        maxRetries,
+                        timeoutMs,
+                        finishReason,
+                        provider,
+                        prompt,
+                        currentPromptVector,
+                    );
                 });
                 return result;
             } catch (err) {
@@ -746,7 +755,15 @@ export class ApiKeyManager extends EventEmitter {
         }
 
         // No concurrency limit configured — run directly
-        return this._executeWithSemanticAndRetry<T>(fn, maxRetries, timeoutMs, finishReason, provider, prompt, currentPromptVector);
+        return this._executeWithSemanticAndRetry<T>(
+            fn,
+            maxRetries,
+            timeoutMs,
+            finishReason,
+            provider,
+            prompt,
+            currentPromptVector,
+        );
     }
 
     /**
@@ -763,7 +780,7 @@ export class ApiKeyManager extends EventEmitter {
      */
     public async *executeStream<T>(
         fn: (key: string, signal?: AbortSignal) => AsyncGenerator<T, any, unknown>,
-        options?: ExecuteOptions & { prompt?: string }
+        options?: ExecuteOptions & { prompt?: string },
     ): AsyncGenerator<T, any, unknown> {
         const maxRetries = options?.maxRetries ?? 0;
         const timeoutMs = options?.timeoutMs;
@@ -779,7 +796,9 @@ export class ApiKeyManager extends EventEmitter {
                 currentPromptVector = await this.getEmbeddingFn(prompt);
                 const cachedResponse = this.semanticCache.get(currentPromptVector);
                 if (cachedResponse !== null) {
-                    console.log(`[Semantic Cache HIT] Streaming cached response for prompt: "${prompt.slice(0, 30)}..."`);
+                    console.log(
+                        `[Semantic Cache HIT] Streaming cached response for prompt: "${prompt.slice(0, 30)}..."`,
+                    );
                     this.emit('executeSuccess', 'CACHE_HIT_STREAM', 0);
                     // Replay full response as a single chunk (or iterate if it's an array)
                     if (Array.isArray(cachedResponse)) {
@@ -801,8 +820,8 @@ export class ApiKeyManager extends EventEmitter {
         // a Promise), so we check availability and track manually.
         const useBulkhead = this.bulkheadPolicy !== null;
         if (useBulkhead) {
-            const slots = (this.bulkheadPolicy as any);
-            const hasSlot = (slots.executionSlots > 0) || (slots.queueSlots > 0);
+            const slots = this.bulkheadPolicy as any;
+            const hasSlot = slots.executionSlots > 0 || slots.queueSlots > 0;
             if (!hasSlot) {
                 this.emit('bulkheadRejected');
                 throw new BulkheadRejectionError();
@@ -853,7 +872,6 @@ export class ApiKeyManager extends EventEmitter {
                     }
 
                     return; // Full success, exit retry loop
-
                 } catch (error: any) {
                     lastError = error;
                     const classification = this.classifyError(error, finishReason);
@@ -899,7 +917,7 @@ export class ApiKeyManager extends EventEmitter {
         finishReason?: string,
         provider?: string,
         prompt?: string,
-        currentPromptVector?: number[] | null
+        currentPromptVector?: number[] | null,
     ): Promise<T> {
         const result = await this._executeWithRetry(fn, maxRetries, timeoutMs, finishReason, provider);
 
@@ -916,7 +934,7 @@ export class ApiKeyManager extends EventEmitter {
         maxRetries: number,
         timeoutMs?: number,
         finishReason?: string,
-        provider?: string
+        provider?: string,
     ): Promise<T> {
         let lastError: any;
 
@@ -946,7 +964,6 @@ export class ApiKeyManager extends EventEmitter {
                 this.markSuccess(key, duration);
                 this.emit('executeSuccess', key, duration);
                 return result;
-
             } catch (error: any) {
                 lastError = error;
                 const classification = this.classifyError(error, finishReason);
@@ -977,7 +994,7 @@ export class ApiKeyManager extends EventEmitter {
     private async _executeWithTimeout<T>(
         fn: (key: string, signal?: AbortSignal) => Promise<T>,
         key: string,
-        timeoutMs: number
+        timeoutMs: number,
     ): Promise<T> {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -989,7 +1006,7 @@ export class ApiKeyManager extends EventEmitter {
                     controller.signal.addEventListener('abort', () => {
                         reject(new TimeoutError(timeoutMs));
                     });
-                })
+                }),
             ]);
             return result;
         } finally {
@@ -998,7 +1015,7 @@ export class ApiKeyManager extends EventEmitter {
     }
 
     private _sleep(ms: number): Promise<void> {
-        return new Promise(resolve => {
+        return new Promise((resolve) => {
             const timer = setTimeout(resolve, ms);
             if (timer.unref) timer.unref();
         });
@@ -1039,9 +1056,7 @@ export class ApiKeyManager extends EventEmitter {
         if (!this.healthCheckFn) return;
 
         // Check non-DEAD keys that are in OPEN or HALF_OPEN state
-        const keysToCheck = this.keys.filter(k =>
-            k.circuitState === 'OPEN' || k.circuitState === 'HALF_OPEN'
-        );
+        const keysToCheck = this.keys.filter((k) => k.circuitState === 'OPEN' || k.circuitState === 'HALF_OPEN');
 
         for (const k of keysToCheck) {
             try {
@@ -1095,24 +1110,27 @@ export class ApiKeyManager extends EventEmitter {
             this._saveTimer = undefined;
         }
 
-        const state = this.keys.reduce((acc, k) => ({
-            ...acc,
-            [k.key]: {
-                failCount: k.failCount,
-                failedAt: k.failedAt,
-                isQuotaError: k.isQuotaError,
-                circuitState: k.circuitState,
-                lastUsed: k.lastUsed,
-                successCount: k.successCount,
-                totalRequests: k.totalRequests,
-                customCooldown: k.customCooldown,
-                weight: k.weight,
-                averageLatency: k.averageLatency,
-                totalLatency: k.totalLatency,
-                latencySamples: k.latencySamples,
-                provider: k.provider
-            }
-        }), {});
+        const state = this.keys.reduce(
+            (acc, k) => ({
+                ...acc,
+                [k.key]: {
+                    failCount: k.failCount,
+                    failedAt: k.failedAt,
+                    isQuotaError: k.isQuotaError,
+                    circuitState: k.circuitState,
+                    lastUsed: k.lastUsed,
+                    successCount: k.successCount,
+                    totalRequests: k.totalRequests,
+                    customCooldown: k.customCooldown,
+                    weight: k.weight,
+                    averageLatency: k.averageLatency,
+                    totalLatency: k.totalLatency,
+                    latencySamples: k.latencySamples,
+                    provider: k.provider,
+                },
+            }),
+            {},
+        );
         this.storage.setItem(this.storageKey, JSON.stringify(state));
     }
 
@@ -1124,7 +1142,7 @@ export class ApiKeyManager extends EventEmitter {
             const data = JSON.parse(raw);
             const now = Date.now();
 
-            this.keys.forEach(k => {
+            this.keys.forEach((k) => {
                 if (!data[k.key]) return;
                 Object.assign(k, data[k.key]);
 
@@ -1144,7 +1162,8 @@ export class ApiKeyManager extends EventEmitter {
                 // If a key was cooling down and the process restarted after the
                 // cooldown would have expired, reset it to CLOSED.
                 if (k.circuitState === 'OPEN' && k.failedAt) {
-                    const cooldown = k.customCooldown || (k.isQuotaError ? CONFIG.COOLDOWN_QUOTA : CONFIG.COOLDOWN_TRANSIENT);
+                    const cooldown =
+                        k.customCooldown || (k.isQuotaError ? CONFIG.COOLDOWN_QUOTA : CONFIG.COOLDOWN_TRANSIENT);
                     if (now - k.failedAt >= cooldown) {
                         k.circuitState = 'HALF_OPEN';
                         k.halfOpenTestTime = null;
@@ -1152,7 +1171,7 @@ export class ApiKeyManager extends EventEmitter {
                 }
             });
         } catch (e) {
-            console.error("Failed to load key state");
+            console.error('Failed to load key state');
         }
     }
 }

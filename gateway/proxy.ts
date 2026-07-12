@@ -42,7 +42,12 @@ function sanitizeHeaders(incoming: Record<string, string>): Record<string, strin
  * Determines if a request should be treated as a streaming request.
  * Consolidated logic across all supported providers.
  */
-export function isStreamRequest(providerName: string, path: string, headers: Record<string, string>, body?: any): boolean {
+export function isStreamRequest(
+    providerName: string,
+    path: string,
+    headers: Record<string, string>,
+    body?: any,
+): boolean {
     // Gemini: alt=sse query parameter
     if (providerName === 'gemini' && path.includes('?alt=sse')) return true;
 
@@ -65,11 +70,7 @@ export function isStreamRequest(providerName: string, path: string, headers: Rec
 /**
  * Builds a URL and injects the API key according to provider auth style.
  */
-export function buildUpstreamUrl(
-    providerDef: ProviderDefinition,
-    path: string,
-    key: string
-): string {
+export function buildUpstreamUrl(providerDef: ProviderDefinition, path: string, key: string): string {
     let url = `${providerDef.baseUrl}${path}`;
     if (providerDef.authStyle === 'query') {
         url += `${url.includes('?') ? '&' : '?'}${providerDef.authKey}=${encodeURIComponent(key)}`;
@@ -84,7 +85,7 @@ export function buildUpstreamUrl(
 export function buildUpstreamHeaders(
     providerDef: ProviderDefinition,
     incomingHeaders: Record<string, string>,
-    key: string
+    key: string,
 ): Record<string, string> {
     const headers = sanitizeHeaders(incomingHeaders);
 
@@ -107,7 +108,7 @@ export function buildUpstreamHeaders(
  */
 export function createProxyFn(
     providerDef: ProviderDefinition,
-    req: TransparentProxyRequest
+    req: TransparentProxyRequest,
 ): (key: string) => Promise<ProxyResponse> {
     return async (key: string): Promise<ProxyResponse> => {
         const url = buildUpstreamUrl(providerDef, req.path, key);
@@ -127,7 +128,9 @@ export function createProxyFn(
         const latencyMs = Date.now() - start;
 
         const resHeaders: Record<string, string> = {};
-        res.headers.forEach((v, k) => { resHeaders[k] = v; });
+        res.headers.forEach((v, k) => {
+            resHeaders[k] = v;
+        });
 
         if (!res.ok) {
             const errorBody = await res.text();
@@ -142,7 +145,9 @@ export function createProxyFn(
         let body = text;
         try {
             body = JSON.parse(text);
-        } catch { /* not JSON, return as raw text */ }
+        } catch {
+            /* not JSON, return as raw text */
+        }
 
         return {
             success: true,
@@ -161,7 +166,7 @@ export function createProxyFn(
  */
 export function createStreamProxyFn(
     providerDef: ProviderDefinition,
-    req: TransparentProxyRequest
+    req: TransparentProxyRequest,
 ): (key: string) => AsyncGenerator<Uint8Array, void, unknown> {
     return async function* (key: string): AsyncGenerator<Uint8Array, void, unknown> {
         const url = buildUpstreamUrl(providerDef, req.path, key);

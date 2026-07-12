@@ -142,7 +142,7 @@ A single, portable `~/codedex/env/` directory that:
 - Survives restarts (persists state)
 - Self-heals (health checks test cooled-down keys)
 - Works with any LLM provider (Gemini, OpenAI, Anthropic + custom)
-- Has a Python port for Python projects
+
 
 ---
 

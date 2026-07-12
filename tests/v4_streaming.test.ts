@@ -7,9 +7,8 @@ const mockStorage = {
 };
 
 describe('ApiKeyManager v4.1 Streaming Support', () => {
-
     test('should yield chunks from generator successfully', async () => {
-        const manager = new ApiKeyManager(['key1'], mockStorage);
+        const manager = new ApiKeyManager(['key1'], { storage: mockStorage });
 
         const mockStreamFn = jest.fn(async function* (key) {
             yield 'Hello';
@@ -29,7 +28,7 @@ describe('ApiKeyManager v4.1 Streaming Support', () => {
     });
 
     test('should retry on INITIAL connection failure', async () => {
-        const manager = new ApiKeyManager(['key1'], mockStorage);
+        const manager = new ApiKeyManager(['key1'], { storage: mockStorage });
 
         let attempts = 0;
         const mockStreamFn = jest.fn(async function* (key) {
@@ -56,7 +55,7 @@ describe('ApiKeyManager v4.1 Streaming Support', () => {
     test('should cache stream result and replay as single chunk on HIT', async () => {
         const mockEmbedding = jest.fn().mockResolvedValue([1, 0, 0]);
         const manager = new ApiKeyManager(['key1'], {
-            semanticCache: { threshold: 0.9, getEmbedding: mockEmbedding }
+            semanticCache: { threshold: 0.9, getEmbedding: mockEmbedding },
         });
 
         const mockStreamFn = jest.fn(async function* (key) {
@@ -80,5 +79,4 @@ describe('ApiKeyManager v4.1 Streaming Support', () => {
         expect(chunks2).toEqual(['Part 1', 'Part 2']); // Length should be 2, same as original
         expect(mockStreamFn).toHaveBeenCalledTimes(1); // Should NOT call again
     });
-
 });

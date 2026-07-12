@@ -39,6 +39,9 @@ async function startGateway(options = {}) {
     const { loadConfig } = require('../dist/gateway/config');
     const config = loadConfig();
 
+    // ── Logger (must be loaded before MultiManager which uses it) ────────
+    const { log } = require('../dist/gateway/middleware');
+
     // ── Initialize MultiManager ──────────────────────────────────────────
     const { MultiManager } = require('../dist/presets/multi');
 
@@ -102,11 +105,18 @@ async function startGateway(options = {}) {
         sseDoneChunk,
     } = require('../dist/gateway/proxy');
 
-    const { getAppId, sendError, log } = require('../dist/gateway/middleware');
+    const { getAppId, sendError } = require('../dist/gateway/middleware');
 
     // ── Fastify App ──────────────────────────────────────────────────────
-    const Fastify = require('fastify');
-    const cors = require('@fastify/cors');
+    let Fastify, cors;
+    try {
+        Fastify = require('fastify');
+        cors = require('@fastify/cors');
+    } catch {
+        console.error('\x1b[31m[FATAL]\x1b[0m fastify and @fastify/cors are required for the gateway.');
+        console.error('\x1b[33m  Install them with: npm install fastify @fastify/cors\x1b[0m');
+        process.exit(1);
+    }
 
     const app = Fastify({ logger: false });
     await app.register(cors, { origin: true });
@@ -177,10 +187,18 @@ async function startGateway(options = {}) {
         try {
             if (isStream) {
                 log('info', appId, `→ STREAM ${provider} ${path}`);
+                // CORS headers must be set manually here because reply.raw.writeHead()
+                // bypasses Fastify's @fastify/cors plugin which only hooks into reply.header()
+                const origin = request.headers.origin || '*';
                 reply.raw.writeHead(200, {
                     'Content-Type': 'text/event-stream',
                     'Cache-Control': 'no-cache',
                     Connection: 'keep-alive',
+                    'Access-Control-Allow-Origin': origin,
+                    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+                    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-App-Id, x-goog-api-key',
+                    'Access-Control-Allow-Credentials': 'true',
+                    'Access-Control-Expose-Headers': '*',
                 });
 
                 const streamFn = createStreamProxyFn(providerDef, proxyReq);
@@ -194,7 +212,10 @@ async function startGateway(options = {}) {
                     for await (const chunk of stream) {
                         reply.raw.write(chunk);
                     }
-                    reply.raw.write(sseDoneChunk());
+                    // Don't emit sseDoneChunk() here — the upstream provider already
+                    // sends its own termination markers (e.g. OpenAI sends [DONE]).
+                    // Adding an extra [DONE] breaks providers like Gemini whose SDK
+                    // tries to parse it as JSON.
                     reply.raw.end();
 
                     auditEntry.statusCode = 200;
@@ -204,7 +225,7 @@ async function startGateway(options = {}) {
                     log('error', appId, `✗ STREAM error: ${streamErr.message}`);
                     try {
                         reply.raw.write(sseErrorChunk(streamErr.message));
-                        reply.raw.write(sseDoneChunk());
+                        // Don't send [DONE] — it breaks Gemini SDK which tries to parse it as JSON
                     } catch {
                         /* connection may already be closed */
                     }
@@ -248,7 +269,7 @@ async function startGateway(options = {}) {
             } else {
                 try {
                     reply.raw.write(sseErrorChunk(err.message));
-                    reply.raw.write(sseDoneChunk());
+                    // Don't send [DONE] — it breaks Gemini SDK which tries to parse it as JSON
                 } catch {
                     /* connection already closed */
                 }
@@ -308,12 +329,22 @@ async function startGateway(options = {}) {
     });
 
     // ── Start Server ────────────────────────────────────────────────────
-    await app.listen({ port, host });
+    try {
+        await app.listen({ port, host });
+    } catch (err) {
+        if (err.code === 'EADDRINUSE') {
+            console.error(`\x1b[31m[FATAL]\x1b[0m Port ${port} is already in use.`);
+            console.error('\x1b[33m  Stop the existing process or set GATEWAY_PORT to a different port.\x1b[0m');
+        } else {
+            console.error('\x1b[31m[FATAL]\x1b[0m Failed to start server:', err.message);
+        }
+        process.exit(1);
+    }
 
     const providers = vault.getProviders();
     console.log('');
     console.log('\x1b[92m ╔══════════════════════════════════════════════════╗\x1b[0m');
-    console.log('\x1b[92m ║     SplashCodeX API Gateway v5.5.0              ║\x1b[0m');
+    console.log('\x1b[92m ║     SplashCodeX API Gateway v5.5.1              ║\x1b[0m');
     console.log('\x1b[92m ╚══════════════════════════════════════════════════╝\x1b[0m');
     console.log('');
     console.log(`\x1b[36m   Server:     http://localhost:${port}\x1b[0m`);

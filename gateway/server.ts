@@ -66,7 +66,9 @@ const vault = managerResult.data;
 
 const rateLimiter = new RateLimiter(config.rateLimits);
 if (Object.keys(config.rateLimits).length > 0) {
-    console.log(`\x1b[36m[gateway]\x1b[0m Per-app rate limits configured for: ${Object.keys(config.rateLimits).join(', ')}`);
+    console.log(
+        `\x1b[36m[gateway]\x1b[0m Per-app rate limits configured for: ${Object.keys(config.rateLimits).join(', ')}`,
+    );
 }
 
 // ─── Audit Trail (in-memory ring buffer for recent requests) ─────────────────
@@ -115,11 +117,17 @@ app.all('/:provider/*', async (request, reply) => {
     if (!providerDef) {
         // Fallback for unmatched routes — inform about transparent proxy upgrade
         if (provider === 'v1' && (params['*'] === 'generate' || params['*'] === 'stream')) {
-            return sendError(reply, 400,
-                'The gateway has been upgraded to a transparent proxy. Please use /gemini/* or /openai/* directly with the official SDKs.');
+            return sendError(
+                reply,
+                400,
+                'The gateway has been upgraded to a transparent proxy. Please use /gemini/* or /openai/* directly with the official SDKs.',
+            );
         }
-        return sendError(reply, 400,
-            `Unknown provider "${provider}". Available: ${[...providerMap.keys()].join(', ')}`);
+        return sendError(
+            reply,
+            400,
+            `Unknown provider "${provider}". Available: ${[...providerMap.keys()].join(', ')}`,
+        );
     }
 
     const proxyReq: TransparentProxyRequest = {
@@ -158,10 +166,18 @@ app.all('/:provider/*', async (request, reply) => {
     try {
         if (isStream) {
             log('info', appId, `→ STREAM ${provider} ${path}`);
+            // CORS headers must be set manually here because reply.raw.writeHead()
+            // bypasses Fastify's @fastify/cors plugin which only hooks into reply.header()
+            const origin = (request.headers as Record<string, string>).origin || '*';
             reply.raw.writeHead(200, {
                 'Content-Type': 'text/event-stream',
                 'Cache-Control': 'no-cache',
-                'Connection': 'keep-alive',
+                Connection: 'keep-alive',
+                'Access-Control-Allow-Origin': origin,
+                'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+                'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-App-Id, x-goog-api-key',
+                'Access-Control-Allow-Credentials': 'true',
+                'Access-Control-Expose-Headers': '*',
             });
 
             const streamFn = createStreamProxyFn(providerDef, proxyReq);
@@ -176,8 +192,10 @@ app.all('/:provider/*', async (request, reply) => {
                     reply.raw.write(chunk);
                 }
 
-                // Graceful termination — emit [DONE] marker for SSE-compliant clients
-                reply.raw.write(sseDoneChunk());
+                // Don't emit sseDoneChunk() here — the upstream provider already
+                // sends its own termination markers (e.g. OpenAI sends [DONE]).
+                // Adding an extra [DONE] breaks providers like Gemini whose SDK
+                // tries to parse it as JSON.
                 reply.raw.end();
 
                 auditEntry.statusCode = 200;
@@ -188,8 +206,10 @@ app.all('/:provider/*', async (request, reply) => {
                 log('error', appId, `✗ STREAM error: ${streamErr.message}`);
                 try {
                     reply.raw.write(sseErrorChunk(streamErr.message));
-                    reply.raw.write(sseDoneChunk());
-                } catch { /* connection may already be closed */ }
+                    // Don't send sseDoneChunk — it breaks Gemini SDK which tries to parse [DONE] as JSON
+                } catch {
+                    /* connection may already be closed */
+                }
                 reply.raw.end();
 
                 auditEntry.error = streamErr.message;
@@ -230,8 +250,10 @@ app.all('/:provider/*', async (request, reply) => {
             // Headers already sent (streaming race) — emit SSE error and close
             try {
                 reply.raw.write(sseErrorChunk(err.message));
-                reply.raw.write(sseDoneChunk());
-            } catch { /* connection already closed */ }
+                // Don't send sseDoneChunk — it breaks Gemini SDK which tries to parse [DONE] as JSON
+            } catch {
+                /* connection already closed */
+            }
             reply.raw.end();
         }
     } finally {

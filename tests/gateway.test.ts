@@ -6,13 +6,7 @@
  */
 
 import { loadConfig, GatewayConfig, ProviderDefinition } from '../gateway/config';
-import {
-    isStreamRequest,
-    buildUpstreamUrl,
-    buildUpstreamHeaders,
-    sseErrorChunk,
-    sseDoneChunk,
-} from '../gateway/proxy';
+import { isStreamRequest, buildUpstreamUrl, buildUpstreamHeaders, sseErrorChunk, sseDoneChunk } from '../gateway/proxy';
 import { RateLimiter, sendError, log } from '../gateway/middleware';
 
 // ─── Config Parsing ──────────────────────────────────────────────────────────
@@ -155,11 +149,7 @@ describe('gateway/proxy — helpers', () => {
             authKey: 'key',
         };
 
-        const url = buildUpstreamUrl(
-            def,
-            '/v1beta/models/gemini-2.0-flash:generateContent',
-            'test-key-abc',
-        );
+        const url = buildUpstreamUrl(def, '/v1beta/models/gemini-2.0-flash:generateContent', 'test-key-abc');
 
         expect(url).toContain('?key=test-key-abc');
         expect(url).toContain('https://generativelanguage.googleapis.com');
@@ -266,48 +256,45 @@ describe('gateway/proxy — helpers', () => {
     // ── isStreamRequest ──────────────────────────────────────────────────────
 
     test('isStreamRequest: gemini with alt=sse', () => {
-        expect(isStreamRequest('gemini', '/v1beta/models/gemini-2.0-flash:streamGenerateContent?alt=sse', {}, undefined))
-            .toBe(true);
+        expect(
+            isStreamRequest('gemini', '/v1beta/models/gemini-2.0-flash:streamGenerateContent?alt=sse', {}, undefined),
+        ).toBe(true);
     });
 
     test('isStreamRequest: gemini without alt=sse', () => {
-        expect(isStreamRequest('gemini', '/v1beta/models/gemini-2.0-flash:generateContent', {}, undefined))
-            .toBe(false);
+        expect(isStreamRequest('gemini', '/v1beta/models/gemini-2.0-flash:generateContent', {}, undefined)).toBe(false);
     });
 
     test('isStreamRequest: body.stream === true (OpenAI style)', () => {
-        expect(isStreamRequest('openai', '/v1/chat/completions', {}, { stream: true }))
-            .toBe(true);
+        expect(isStreamRequest('openai', '/v1/chat/completions', {}, { stream: true })).toBe(true);
     });
 
     test('isStreamRequest: body.stream === false', () => {
-        expect(isStreamRequest('openai', '/v1/chat/completions', {}, { stream: false }))
-            .toBe(false);
+        expect(isStreamRequest('openai', '/v1/chat/completions', {}, { stream: false })).toBe(false);
     });
 
     test('isStreamRequest: anthropic with stream=true query', () => {
-        expect(isStreamRequest('anthropic', '/v1/messages?stream=true', {}, {}))
-            .toBe(true);
+        expect(isStreamRequest('anthropic', '/v1/messages?stream=true', {}, {})).toBe(true);
     });
 
     test('isStreamRequest: anthropic with body.stream === true', () => {
-        expect(isStreamRequest('anthropic', '/v1/messages', {}, { stream: true }))
-            .toBe(true);
+        expect(isStreamRequest('anthropic', '/v1/messages', {}, { stream: true })).toBe(true);
     });
 
     test('isStreamRequest: anthropic with body.stream === "sse"', () => {
-        expect(isStreamRequest('anthropic', '/v1/messages', {}, { stream: 'sse' }))
-            .toBe(true);
+        expect(isStreamRequest('anthropic', '/v1/messages', {}, { stream: 'sse' })).toBe(true);
     });
 
     test('isStreamRequest: generic SSE by Accept header', () => {
-        expect(isStreamRequest('openai', '/v1/chat/completions', { accept: 'text/event-stream' }, undefined))
-            .toBe(true);
+        expect(isStreamRequest('openai', '/v1/chat/completions', { accept: 'text/event-stream' }, undefined)).toBe(
+            true,
+        );
     });
 
     test('isStreamRequest: no stream signals at all', () => {
-        expect(isStreamRequest('gemini', '/v1beta/models/gemini-2.0-flash:generateContent', {}, { prompt: 'hello' }))
-            .toBe(false);
+        expect(
+            isStreamRequest('gemini', '/v1beta/models/gemini-2.0-flash:generateContent', {}, { prompt: 'hello' }),
+        ).toBe(false);
     });
 
     // ── SSE Helpers ─────────────────────────────────────────────────────────

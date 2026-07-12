@@ -144,8 +144,8 @@ export function loadCentralEnv(options: LoadCentralEnvOptions = {}): LoadResult 
         if (!silent) {
             throw new Error(
                 `Centralized env directory not found: ${envDir}\n` +
-                `Create it with: mkdir -p ${envDir}\n` +
-                `Or set CODEDEX_ENV_DIR to point to your env directory.`
+                    `Create it with: mkdir -p ${envDir}\n` +
+                    `Or set CODEDEX_ENV_DIR to point to your env directory.`,
             );
         }
         return result;
@@ -158,7 +158,7 @@ export function loadCentralEnv(options: LoadCentralEnvOptions = {}): LoadResult 
     } else {
         try {
             filesToLoad = readdirSync(envDir)
-                .filter(f => f.endsWith('.env'))
+                .filter((f) => f.endsWith('.env'))
                 .sort(); // Alphabetical order for deterministic loading
         } catch {
             if (!silent) throw new Error(`Cannot read env directory: ${envDir}`);
@@ -210,7 +210,9 @@ export function getCentralEnvVar(key: string, options?: { envDir?: string }): st
     if (!existsSync(envDir)) return undefined;
 
     try {
-        const files = readdirSync(envDir).filter(f => f.endsWith('.env')).sort();
+        const files = readdirSync(envDir)
+            .filter((f) => f.endsWith('.env'))
+            .sort();
 
         for (const fileName of files) {
             const content = readFileSync(join(envDir, fileName), 'utf-8');

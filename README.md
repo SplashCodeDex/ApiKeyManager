@@ -22,7 +22,6 @@
 - [CLI Commands](#-cli-commands)
 - [Configuration Reference](#-configuration-reference)
 - [Event System](#-event-system)
-- [Python SDK](#-python-sdk)
 - [Development & Testing](#-development--testing)
 - [Migration Guide](#-migration-guide)
 - [License](#-license)
@@ -109,7 +108,7 @@ Read more in [`WhyThisProject.md`](./WhyThisProject.md).
 - **Centralized API Gateway** — Fastify transparent proxy, auto key injection
 - **Semantic Cache** — Cosine-similarity cache with pluggable embedding functions
 - **Streaming Support** — `executeStream()` with initial retry logic and cache replay
-- **100% Backward Compatible** — v1.x through v4.x code works without changes
+- **Clean v6 API** — Options-object constructor only (no legacy positional args)
 
 ---
 
@@ -400,10 +399,6 @@ All presets share these defaults:
 #### Constructor
 
 ```typescript
-// Legacy (v1/v2 — still works)
-new ApiKeyManager(['key1', 'key2'], storage, strategy);
-
-// Modern (v3+)
 new ApiKeyManager(keys, {
     storage: new FileStorage({ filePath: './state.json' }),
     strategy: new LatencyStrategy(),
@@ -430,7 +425,6 @@ new ApiKeyManager(keys, {
 | `getKeyCount()` | Number of non-dead keys |
 | `markSuccess(key, durationMs?)` | Mark a key as healthy, update latency stats |
 | `markFailed(key, classification)` | Mark a key as failed, trigger circuit breaker |
-| `markFailedLegacy(key, isQuota?)` | Legacy compatibility method |
 | `classifyError(error, finishReason?)` | Classify an error: `QUOTA`, `AUTH`, `TRANSIENT`, `SAFETY`, `RECITATION`, `TIMEOUT`, `BAD_REQUEST`, `UNKNOWN` |
 | `setHealthCheck(fn)` | Set a health check function `(key) => Promise<boolean>` |
 | `startHealthChecks(intervalMs?)` | Start periodic health checks (default: 60s) |
@@ -774,23 +768,6 @@ manager.on('bulkheadRejected', () => {
 
 ---
 
-## 🐍 Python SDK
-
-A Python port of the core ApiKeyManager is available at [`python-sdk/`](./python-sdk/):
-
-```bash
-pip install splashcodex-api-manager
-```
-
-Supports Python 3.9+. Feature parity with the TypeScript version:
-- `GeminiManager`, `OpenAIManager`, `MultiManager` presets
-- Circuit breaker, error classification, exponential backoff
-- `FileStorage` and `MemoryStorage`
-- `execute()` and `executeStream()` wrappers
-- CLI: `splashcodex-api-manager init`
-
-See [`python-sdk/README.md`](./python-sdk/README.md) for full documentation.
-
 ---
 
 ## 🧪 Development & Testing
@@ -850,9 +827,9 @@ CI runs on Node.js 18.x, 20.x, and 22.x via GitHub Actions.
 
 ### v2.x → v3.x
 
-- Constructor now accepts an options object instead of positional arguments (legacy still supported).
+- Constructor now requires an options object: `new ApiKeyManager(keys, { storage, strategy })`. Positional arguments are no longer supported.
 - New error classification system: `classifyError()` returns `ErrorClassification` with `markKeyFailed` and `markKeyDead` booleans.
-- New `markFailed(key, classification)` replaces `markFailedLegacy()`.
+- `markFailed(key, classification)` is the only failure method. `markFailedLegacy()` has been removed.
 - Concurrency control via `concurrency` and `concurrencyQueueSize` options.
 - Provider tags for multi-provider key pools.
 

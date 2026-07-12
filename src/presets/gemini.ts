@@ -69,7 +69,7 @@ export class GeminiManager extends BasePreset {
         return BasePreset.createInstance(
             GeminiManager as unknown as new (keys: string[], options: PresetOptions) => GeminiManager,
             GeminiManager.getDefaultOptions(),
-            overrides
+            overrides,
         ) as Result<GeminiManager>;
     }
 

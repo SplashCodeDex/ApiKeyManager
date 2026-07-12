@@ -29,9 +29,9 @@ export function sendError(reply: FastifyReply, statusCode: number, message: stri
 export function log(level: 'info' | 'warn' | 'error', appId: string, message: string) {
     const ts = new Date().toISOString();
     const colors: Record<string, string> = {
-        info: '\x1b[36m',   // cyan
-        warn: '\x1b[33m',   // yellow
-        error: '\x1b[31m',  // red
+        info: '\x1b[36m', // cyan
+        warn: '\x1b[33m', // yellow
+        error: '\x1b[31m', // red
     };
     const reset = '\x1b[0m';
     const prefix = `${colors[level]}[${ts}]${reset} \x1b[90m[${appId}]${reset}`;
@@ -122,7 +122,7 @@ export class RateLimiter {
                 requestsPerMin: cfg.requestsPerMin,
                 used,
                 remaining: Math.max(0, cfg.requestsPerMin - used),
-                resetInMs: used > 0 ? Math.max(0, (oldest + this.windowMs) - now) : 0,
+                resetInMs: used > 0 ? Math.max(0, oldest + this.windowMs - now) : 0,
             };
         }
 

@@ -66,7 +66,7 @@ export class AnthropicManager extends BasePreset {
         return BasePreset.createInstance(
             AnthropicManager as unknown as new (keys: string[], options: PresetOptions) => AnthropicManager,
             AnthropicManager.getDefaultOptions(),
-            overrides
+            overrides,
         ) as Result<AnthropicManager>;
     }
 

@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [5.5.1] — 2026-07 — Python SDK Deprecated + Provider Expansion
+
+### Removed
+
+- **Python SDK Deprecated**: The `python-sdk/` package is no longer maintained. TypeScript/Node.js only going forward.
+
+### Added
+
+- **5 New Built-in Gateway Providers**: Groq, Mistral, DeepSeek, Together AI, and Cohere are now built-in providers in the API Gateway. No need to configure them via `GATEWAY_EXTRA_PROVIDERS` — just set their respective env vars (`GROQ_API_KEY`, `MISTRAL_API_KEY`, `DEEPSEEK_API_KEY`, `TOGETHER_API_KEY`, `COHERE_API_KEY`).
+
+- **ESM Build**: New `tsconfig.esm.json` outputs ES module builds to `dist/esm/`. Subpath exports now resolve `"import"` to ESM and `"require"` to CJS via conditional exports.
+
+- **Optional Gateway Dependencies**: `fastify` and `@fastify/cors` moved to `optionalDependencies`. SDK-only users no longer download the gateway server.
+
+- **Code Quality Tooling**: Added ESLint (`@typescript-eslint`), Prettier, and `.editorconfig`. Jest coverage thresholds set at 60% branches / 70% lines. New scripts: `lint`, `lint:fix`, `format`, `format:check`, `test:coverage`.
+
+- **Secret Encryption at Rest**: `FileStorage` now supports AES-256-GCM encryption. Pass `{ encryption: { key: process.env.CODEDEX_ENCRYPTION_KEY } }` to encrypt the state file on disk. Also supports PBKDF2 key derivation from a password. Backward compatible — unencrypted state files continue to work, encrypted files auto-detect via a magic prefix.
+
+---
+
 ## [5.5.0] — 2026-07 — Production Packaging
 
 ### Added

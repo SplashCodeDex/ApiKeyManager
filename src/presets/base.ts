@@ -12,13 +12,7 @@
  * @module presets/base
  */
 
-import {
-    ApiKeyManager,
-    LatencyStrategy,
-    ExecuteOptions,
-    ApiKeyManagerOptions,
-    LoadBalancingStrategy,
-} from '../index';
+import { ApiKeyManager, LatencyStrategy, ExecuteOptions, ApiKeyManagerOptions, LoadBalancingStrategy } from '../index';
 import { FileStorage } from '../persistence/file';
 import { join, basename } from 'path';
 import { tmpdir, homedir } from 'os';
@@ -31,9 +25,7 @@ import { createHash } from 'crypto';
  * A discriminated union for safe error handling without exceptions.
  * Used by `getInstance()` to avoid crashing on missing env vars.
  */
-export type Result<T> =
-    | { success: true; data: T }
-    | { success: false; error: Error };
+export type Result<T> = { success: true; data: T } | { success: false; error: Error };
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 
@@ -79,7 +71,9 @@ export interface PresetLogger {
  */
 function getProjectId(): string {
     const cwd = process.cwd();
-    const dirName = basename(cwd).toLowerCase().replace(/[^a-z0-9]/g, '');
+    const dirName = basename(cwd)
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, '');
     const hash = createHash('md5').update(cwd).digest('hex').slice(0, 4);
     return `${dirName}_${hash}`;
 }
@@ -109,7 +103,8 @@ export abstract class BasePreset {
 
     protected manager: ApiKeyManager;
     protected logger: PresetLogger;
-    protected options: Required<Pick<PresetOptions, 'provider' | 'concurrency' | 'healthCheckIntervalMs'>> & PresetOptions;
+    protected options: Required<Pick<PresetOptions, 'provider' | 'concurrency' | 'healthCheckIntervalMs'>> &
+        PresetOptions;
 
     protected constructor(apiKeys: string[], options: PresetOptions) {
         this.logger = options.logger || console;
@@ -122,8 +117,8 @@ export abstract class BasePreset {
         };
 
         const projectId = getProjectId();
-        const stateFile = this.options.stateFilePath ||
-            join(tmpdir(), `codedex_${this.options.provider}_${projectId}_state.json`);
+        const stateFile =
+            this.options.stateFilePath || join(tmpdir(), `codedex_${this.options.provider}_${projectId}_state.json`);
 
         const storage = new FileStorage({
             filePath: stateFile,
@@ -147,9 +142,9 @@ export abstract class BasePreset {
 
         this.logger.info(
             `[${this.options.provider}] ApiKeyManager initialized with ${apiKeys.length} keys ` +
-            `(Strategy: ${this.options.strategy?.constructor.name || 'LatencyStrategy'}, ` +
-            `Concurrency: ${this.options.concurrency}, ` +
-            `HealthChecks: ${this.options.healthCheckIntervalMs > 0 ? `every ${this.options.healthCheckIntervalMs / 1000}s` : 'disabled'})`
+                `(Strategy: ${this.options.strategy?.constructor.name || 'LatencyStrategy'}, ` +
+                `Concurrency: ${this.options.concurrency}, ` +
+                `HealthChecks: ${this.options.healthCheckIntervalMs > 0 ? `every ${this.options.healthCheckIntervalMs / 1000}s` : 'disabled'})`,
         );
     }
 
@@ -158,24 +153,27 @@ export abstract class BasePreset {
      */
     private wireEvents(): void {
         const tag = this.options.provider;
-        this.manager.on('keyDead', (key) =>
-            this.logger.error(`[${tag}] Key PERMANENTLY DEAD: ...${key.slice(-4)}`));
+        this.manager.on('keyDead', (key) => this.logger.error(`[${tag}] Key PERMANENTLY DEAD: ...${key.slice(-4)}`));
         this.manager.on('circuitOpen', (key) =>
-            this.logger.warn(`[${tag}] Circuit OPEN (cooldown): ...${key.slice(-4)}`));
-        this.manager.on('keyRecovered', (key) =>
-            this.logger.info(`[${tag}] Key RECOVERED: ...${key.slice(-4)}`));
+            this.logger.warn(`[${tag}] Circuit OPEN (cooldown): ...${key.slice(-4)}`),
+        );
+        this.manager.on('keyRecovered', (key) => this.logger.info(`[${tag}] Key RECOVERED: ...${key.slice(-4)}`));
         this.manager.on('retry', (key, attempt, delay) =>
-            this.logger.info(`[${tag}] Retry with ...${key.slice(-4)} (Attempt ${attempt}, Delay ${delay}ms)`));
-        this.manager.on('fallback', (reason) =>
-            this.logger.warn(`[${tag}] Triggering FALLBACK: ${reason}`));
+            this.logger.info(`[${tag}] Retry with ...${key.slice(-4)} (Attempt ${attempt}, Delay ${delay}ms)`),
+        );
+        this.manager.on('fallback', (reason) => this.logger.warn(`[${tag}] Triggering FALLBACK: ${reason}`));
         this.manager.on('allKeysExhausted', () =>
-            this.logger.error(`[${tag}] ALL KEYS EXHAUSTED! No fallback available.`));
+            this.logger.error(`[${tag}] ALL KEYS EXHAUSTED! No fallback available.`),
+        );
         this.manager.on('bulkheadRejected', () =>
-            this.logger.warn(`[${tag}] Bulkhead rejected request (concurrency limit reached)`));
+            this.logger.warn(`[${tag}] Bulkhead rejected request (concurrency limit reached)`),
+        );
         this.manager.on('healthCheckPassed', (key) =>
-            this.logger.info(`[${tag}] Health check PASSED: ...${key.slice(-4)}`));
+            this.logger.info(`[${tag}] Health check PASSED: ...${key.slice(-4)}`),
+        );
         this.manager.on('healthCheckFailed', (key) =>
-            this.logger.warn(`[${tag}] Health check FAILED: ...${key.slice(-4)}`));
+            this.logger.warn(`[${tag}] Health check FAILED: ...${key.slice(-4)}`),
+        );
     }
 
     // ─── Public API ─────────────────────────────────────────────────────────
@@ -185,7 +183,7 @@ export abstract class BasePreset {
      */
     async execute<T>(
         fn: (key: string, signal?: AbortSignal) => Promise<T>,
-        options?: ExecuteOptions & { prompt?: string }
+        options?: ExecuteOptions & { prompt?: string },
     ): Promise<T> {
         return this.manager.execute(fn, options);
     }
@@ -195,7 +193,7 @@ export abstract class BasePreset {
      */
     async *executeStream<T>(
         fn: (key: string, signal?: AbortSignal) => AsyncGenerator<T, any, unknown>,
-        options?: ExecuteOptions & { prompt?: string }
+        options?: ExecuteOptions & { prompt?: string },
     ): AsyncGenerator<T, any, unknown> {
         yield* this.manager.executeStream(fn, options);
     }
@@ -268,7 +266,12 @@ export abstract class BasePreset {
             }
 
             // Comma-separated or single key
-            keys.push(...trimmed.split(',').map(k => k.trim()).filter(k => k.length > 0));
+            keys.push(
+                ...trimmed
+                    .split(',')
+                    .map((k) => k.trim())
+                    .filter((k) => k.length > 0),
+            );
         }
 
         return [...new Set(keys)]; // Deduplicate
@@ -284,7 +287,7 @@ export abstract class BasePreset {
      */
     protected static parseKeysFromHomeDir(envKeys: string[]): string[] {
         const configPath = this.getConfigPath();
-        
+
         if (!existsSync(configPath)) return [];
 
         try {
@@ -295,11 +298,16 @@ export abstract class BasePreset {
             for (const envName of envKeys) {
                 const value = parsed[envName];
                 if (!value) continue;
-                
+
                 if (Array.isArray(value)) {
                     keys.push(...value.filter((k: any) => typeof k === 'string' && k.trim()));
                 } else if (typeof value === 'string' && value.trim()) {
-                    keys.push(...value.split(',').map(k => k.trim()).filter(k => k.length > 0));
+                    keys.push(
+                        ...value
+                            .split(',')
+                            .map((k) => k.trim())
+                            .filter((k) => k.length > 0),
+                    );
                 }
             }
             return [...new Set(keys)];
@@ -319,7 +327,7 @@ export abstract class BasePreset {
     protected static createInstance<T extends BasePreset>(
         PresetClass: new (keys: string[], options: PresetOptions) => T,
         defaultOptions: Partial<PresetOptions>,
-        overrides?: Partial<PresetOptions>
+        overrides?: Partial<PresetOptions>,
     ): Result<T> {
         const mergedOptions = { ...defaultOptions, ...overrides } as PresetOptions;
         const instanceKey = mergedOptions.provider || PresetClass.name;
@@ -343,7 +351,7 @@ export abstract class BasePreset {
                 success: false,
                 error: new Error(
                     `[${instanceKey}] No API keys found in env vars: ${envKeys.join(', ')}. ` +
-                    `Set these environment variables or use loadCentralEnv() to load from ~/codedex/env/ first.`
+                        `Set these environment variables or use loadCentralEnv() to load from ~/codedex/env/ first.`,
                 ),
             };
         }

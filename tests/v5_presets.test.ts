@@ -60,7 +60,11 @@ describe('FileStorage', () => {
     });
 
     afterEach(() => {
-        try { fs.unlinkSync(stateFile); } catch { /* already cleaned */ }
+        try {
+            fs.unlinkSync(stateFile);
+        } catch {
+            /* already cleaned */
+        }
     });
 
     test('getItem returns null when no file exists', () => {
@@ -103,10 +107,10 @@ describe('BasePreset $HOME centralization', () => {
     beforeEach(() => {
         mockHome = fs.mkdtempSync(path.join(os.tmpdir(), 'codedex-home-'));
         configPath = path.join(mockHome, 'api_keys.json');
-        
+
         // Mock getConfigPath to point to our temp file
         jest.spyOn(BasePreset as any, 'getConfigPath').mockReturnValue(configPath);
-        
+
         GeminiManager.reset();
         BasePreset.resetAll();
         delete process.env.GOOGLE_GEMINI_API_KEY;
@@ -115,13 +119,20 @@ describe('BasePreset $HOME centralization', () => {
 
     afterEach(() => {
         jest.restoreAllMocks();
-        try { fs.rmSync(mockHome, { recursive: true, force: true }); } catch {}
+        try {
+            fs.rmSync(mockHome, { recursive: true, force: true });
+        } catch {
+            // Ignore cleanup errors
+        }
     });
 
     test('getInstance falls back to ~/.codedex/api_keys.json when env is empty', () => {
-        fs.writeFileSync(configPath, JSON.stringify({
-            'GOOGLE_GEMINI_API_KEY': ['home-key-1', 'home-key-2']
-        }));
+        fs.writeFileSync(
+            configPath,
+            JSON.stringify({
+                GOOGLE_GEMINI_API_KEY: ['home-key-1', 'home-key-2'],
+            }),
+        );
 
         const result = GeminiManager.getInstance();
         expect(result.success).toBe(true);
@@ -129,12 +140,15 @@ describe('BasePreset $HOME centralization', () => {
             expect(result.data.getKeyCount()).toBe(2);
         }
     });
-    
+
     test('getInstance ignores ~/.codedex/api_keys.json if env has keys', () => {
         process.env.GOOGLE_GEMINI_API_KEY = 'env-key-1';
-        fs.writeFileSync(configPath, JSON.stringify({
-            'GOOGLE_GEMINI_API_KEY': ['home-key-1', 'home-key-2']
-        }));
+        fs.writeFileSync(
+            configPath,
+            JSON.stringify({
+                GOOGLE_GEMINI_API_KEY: ['home-key-1', 'home-key-2'],
+            }),
+        );
 
         const result = GeminiManager.getInstance();
         expect(result.success).toBe(true);
@@ -448,17 +462,23 @@ describe('MultiManager', () => {
         const vault = result.data;
 
         // Execute with Gemini provider
-        const geminiResult = await vault.execute(async (key) => {
-            expect(key).toBe('gem-route-key');
-            return 'gemini-response';
-        }, { provider: 'gemini' });
+        const geminiResult = await vault.execute(
+            async (key) => {
+                expect(key).toBe('gem-route-key');
+                return 'gemini-response';
+            },
+            { provider: 'gemini' },
+        );
         expect(geminiResult).toBe('gemini-response');
 
         // Execute with OpenAI provider
-        const openaiResult = await vault.execute(async (key) => {
-            expect(key).toBe('sk-route-key');
-            return 'openai-response';
-        }, { provider: 'openai' });
+        const openaiResult = await vault.execute(
+            async (key) => {
+                expect(key).toBe('sk-route-key');
+                return 'openai-response';
+            },
+            { provider: 'openai' },
+        );
         expect(openaiResult).toBe('openai-response');
     });
 
@@ -474,9 +494,9 @@ describe('MultiManager', () => {
         expect(result.success).toBe(true);
         if (!result.success) return;
 
-        await expect(
-            result.data.execute(async () => 'x', { provider: 'anthropic' })
-        ).rejects.toThrow('Unknown provider "anthropic"');
+        await expect(result.data.execute(async () => 'x', { provider: 'anthropic' })).rejects.toThrow(
+            'Unknown provider "anthropic"',
+        );
     });
 
     test('getMultiStats returns stats for all providers', () => {
@@ -562,12 +582,16 @@ describe('Preset + FileStorage Integration', () => {
 
         // Verify a state file matching the pattern exists in tmpdir
         const tmpFiles = fs.readdirSync(os.tmpdir());
-        const stateFiles = tmpFiles.filter(f => f.startsWith('codedex_gemini_') && f.endsWith('_state.json'));
+        const stateFiles = tmpFiles.filter((f) => f.startsWith('codedex_gemini_') && f.endsWith('_state.json'));
         expect(stateFiles.length).toBeGreaterThanOrEqual(1);
 
         // Clean up
         for (const f of stateFiles) {
-            try { fs.unlinkSync(path.join(os.tmpdir(), f)); } catch { /* ok */ }
+            try {
+                fs.unlinkSync(path.join(os.tmpdir(), f));
+            } catch {
+                /* ok */
+            }
         }
     });
 });

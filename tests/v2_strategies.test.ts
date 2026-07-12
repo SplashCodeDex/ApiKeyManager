@@ -1,26 +1,30 @@
-
 import { ApiKeyManager, KeyState, StandardStrategy, WeightedStrategy, LatencyStrategy } from '../src/index';
 
 // Mock storage
 const mockStorage = {
     getItem: () => null,
-    setItem: () => { }
+    setItem: () => {},
 };
 
 describe('ApiKeyManager v2.0 Strategies', () => {
-
     describe('StandardStrategy', () => {
         it('should pick the pristine key over a failed one', () => {
-            const manager = new ApiKeyManager(['key1', 'key2'], mockStorage);
+            const manager = new ApiKeyManager(['key1', 'key2'], { storage: mockStorage });
             // key1 fails
-            manager.markFailed('key1', { type: 'TRANSIENT', retryable: true, cooldownMs: 1000, markKeyFailed: true, markKeyDead: false });
+            manager.markFailed('key1', {
+                type: 'TRANSIENT',
+                retryable: true,
+                cooldownMs: 1000,
+                markKeyFailed: true,
+                markKeyDead: false,
+            });
 
             const key = manager.getKey();
             expect(key).toBe('key2');
         });
 
         it('should pick the least recently used key among equals', () => {
-            const manager = new ApiKeyManager(['key1', 'key2'], mockStorage);
+            const manager = new ApiKeyManager(['key1', 'key2'], { storage: mockStorage });
             // Use key1
             const k1 = manager.getKey();
             expect(k1).toBe('key1'); // First one
@@ -35,9 +39,11 @@ describe('ApiKeyManager v2.0 Strategies', () => {
         it('should respect weights (deterministic check)', () => {
             // key1 has 0 weight, key2 has 1 weight. key2 must be picked.
             const manager = new ApiKeyManager(
-                [{ key: 'key1', weight: 0 }, { key: 'key2', weight: 1 }],
-                mockStorage,
-                new WeightedStrategy()
+                [
+                    { key: 'key1', weight: 0 },
+                    { key: 'key2', weight: 1 },
+                ],
+                { storage: mockStorage, strategy: new WeightedStrategy() },
             );
 
             const key = manager.getKey();
@@ -46,13 +52,21 @@ describe('ApiKeyManager v2.0 Strategies', () => {
 
         it('should fallback if high weight key is dead', () => {
             const manager = new ApiKeyManager(
-                [{ key: 'key1', weight: 0 }, { key: 'key2', weight: 1 }],
-                mockStorage,
-                new WeightedStrategy()
+                [
+                    { key: 'key1', weight: 0 },
+                    { key: 'key2', weight: 1 },
+                ],
+                { storage: mockStorage, strategy: new WeightedStrategy() },
             );
 
             // Kill key2
-            manager.markFailed('key2', { type: 'AUTH', retryable: false, cooldownMs: 0, markKeyFailed: true, markKeyDead: true });
+            manager.markFailed('key2', {
+                type: 'AUTH',
+                retryable: false,
+                cooldownMs: 0,
+                markKeyFailed: true,
+                markKeyDead: true,
+            });
 
             const key = manager.getKey();
             expect(key).toBe('key1');
@@ -61,7 +75,7 @@ describe('ApiKeyManager v2.0 Strategies', () => {
 
     describe('LatencyStrategy', () => {
         it('should pick the lowest latency key', () => {
-            const manager = new ApiKeyManager(['key1', 'key2'], mockStorage, new LatencyStrategy());
+            const manager = new ApiKeyManager(['key1', 'key2'], { storage: mockStorage, strategy: new LatencyStrategy() });
 
             // key1 took 100ms
             manager.markSuccess('key1', 100);
@@ -74,7 +88,7 @@ describe('ApiKeyManager v2.0 Strategies', () => {
         });
 
         it('should prefer untried (latency 0) keys over slow keys', () => {
-            const manager = new ApiKeyManager(['key1', 'key2'], mockStorage, new LatencyStrategy());
+            const manager = new ApiKeyManager(['key1', 'key2'], { storage: mockStorage, strategy: new LatencyStrategy() });
 
             // key1 is slow
             manager.markSuccess('key1', 5000);
@@ -85,7 +99,7 @@ describe('ApiKeyManager v2.0 Strategies', () => {
         });
 
         it('should tie-break using LRU when latencies are equal', () => {
-            const manager = new ApiKeyManager(['key1', 'key2'], mockStorage, new LatencyStrategy());
+            const manager = new ApiKeyManager(['key1', 'key2'], { storage: mockStorage, strategy: new LatencyStrategy() });
 
             // Both have 0 latency. Use key1.
             const k1 = manager.getKey();

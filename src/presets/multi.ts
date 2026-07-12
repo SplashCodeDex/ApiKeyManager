@@ -48,16 +48,16 @@ import { createHash } from 'crypto';
 
 function getProjectId(): string {
     const cwd = process.cwd();
-    const dirName = basename(cwd).toLowerCase().replace(/[^a-z0-9]/g, '');
+    const dirName = basename(cwd)
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, '');
     const hash = createHash('md5').update(cwd).digest('hex').slice(0, 4);
     return `${dirName}_${hash}`;
 }
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-export type Result<T> =
-    | { success: true; data: T }
-    | { success: false; error: Error };
+export type Result<T> = { success: true; data: T } | { success: false; error: Error };
 
 export interface ProviderConfig {
     /** Environment variable names to read API keys from */
@@ -98,7 +98,9 @@ export class MultiManager {
             const keys = MultiManager.parseKeysFromEnv(config.envKeys);
 
             if (keys.length === 0) {
-                this.logger.warn(`[MultiManager:${providerName}] No API keys found in: ${config.envKeys.join(', ')} — provider skipped`);
+                this.logger.warn(
+                    `[MultiManager:${providerName}] No API keys found in: ${config.envKeys.join(', ')} — provider skipped`,
+                );
                 continue;
             }
 
@@ -117,13 +119,17 @@ export class MultiManager {
 
             // Wire events
             manager.on('keyDead', (key) =>
-                this.logger.error(`[MultiManager:${providerName}] Key DEAD: ...${key.slice(-4)}`));
+                this.logger.error(`[MultiManager:${providerName}] Key DEAD: ...${key.slice(-4)}`),
+            );
             manager.on('circuitOpen', (key) =>
-                this.logger.warn(`[MultiManager:${providerName}] Circuit OPEN: ...${key.slice(-4)}`));
+                this.logger.warn(`[MultiManager:${providerName}] Circuit OPEN: ...${key.slice(-4)}`),
+            );
             manager.on('keyRecovered', (key) =>
-                this.logger.info(`[MultiManager:${providerName}] Key RECOVERED: ...${key.slice(-4)}`));
+                this.logger.info(`[MultiManager:${providerName}] Key RECOVERED: ...${key.slice(-4)}`),
+            );
             manager.on('allKeysExhausted', () =>
-                this.logger.error(`[MultiManager:${providerName}] ALL KEYS EXHAUSTED`));
+                this.logger.error(`[MultiManager:${providerName}] ALL KEYS EXHAUSTED`),
+            );
 
             // Health checks
             const interval = options.healthCheckIntervalMs ?? 300_000;
@@ -132,9 +138,7 @@ export class MultiManager {
             }
 
             this.managers.set(providerName, manager);
-            this.logger.info(
-                `[MultiManager:${providerName}] Initialized with ${keys.length} keys`
-            );
+            this.logger.info(`[MultiManager:${providerName}] Initialized with ${keys.length} keys`);
         }
     }
 
@@ -179,13 +183,13 @@ export class MultiManager {
      */
     async execute<T>(
         fn: (key: string, signal?: AbortSignal) => Promise<T>,
-        options: ExecuteOptions & { prompt?: string; provider: string }
+        options: ExecuteOptions & { prompt?: string; provider: string },
     ): Promise<T> {
         const manager = this.managers.get(options.provider);
         if (!manager) {
             throw new Error(
                 `[MultiManager] Unknown provider "${options.provider}". ` +
-                `Available: ${[...this.managers.keys()].join(', ')}`
+                    `Available: ${[...this.managers.keys()].join(', ')}`,
             );
         }
         // Strip `provider` before delegating — each manager only has keys for one provider
@@ -198,13 +202,13 @@ export class MultiManager {
      */
     async *executeStream<T>(
         fn: (key: string, signal?: AbortSignal) => AsyncGenerator<T, any, unknown>,
-        options: ExecuteOptions & { prompt?: string; provider: string }
+        options: ExecuteOptions & { prompt?: string; provider: string },
     ): AsyncGenerator<T, any, unknown> {
         const manager = this.managers.get(options.provider);
         if (!manager) {
             throw new Error(
                 `[MultiManager] Unknown provider "${options.provider}". ` +
-                `Available: ${[...this.managers.keys()].join(', ')}`
+                    `Available: ${[...this.managers.keys()].join(', ')}`,
             );
         }
         const { provider, ...delegateOptions } = options;
@@ -281,9 +285,16 @@ export class MultiManager {
                         keys.push(...parsed.filter((k: any) => typeof k === 'string' && k.trim()));
                         continue;
                     }
-                } catch { /* not JSON */ }
+                } catch {
+                    /* not JSON */
+                }
             }
-            keys.push(...trimmed.split(',').map(k => k.trim()).filter(k => k.length > 0));
+            keys.push(
+                ...trimmed
+                    .split(',')
+                    .map((k) => k.trim())
+                    .filter((k) => k.length > 0),
+            );
         }
         return [...new Set(keys)];
     }

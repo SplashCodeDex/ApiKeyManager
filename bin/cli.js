@@ -4,12 +4,18 @@ const path = require('path');
 const os = require('os');
 
 const args = process.argv.slice(2);
-const command = args[0];
+
+// Split on '--' separator: before = CLI args, after = child command to spawn
+const sepIndex = args.indexOf('--');
+const cliArgs = sepIndex !== -1 ? args.slice(0, sepIndex) : args;
+const childArgs = sepIndex !== -1 ? args.slice(sepIndex + 1) : null;
+
+const command = cliArgs[0];
 
 const ENV_DIR = path.join(os.homedir(), 'codedex', 'env');
 
 function printDocs() {
-    console.log(`\x1b[92m@splashcodex/api-key-manager v5.5.0\x1b[0m`);
+    console.log(`\x1b[92m@splashcodex/api-key-manager v5.5.1\x1b[0m`);
     console.log(`\x1b[96mDocs: https://www.npmjs.com/package/@splashcodex/ApiKeyManager\x1b[0m\n`);
     console.log(`\x1b[93mCommands:\x1b[0m`);
     console.log(`   npx @splashcodex/api-key-manager init    \x1b[90m# Scaffold demo + central env directory\x1b[0m`);
@@ -117,7 +123,7 @@ function initProject() {
     // Create demo.ts
     if (!fs.existsSync(demoPath)) {
         const tsCode = `/**
- * Demo: @splashcodex/api-key-manager v5.5.0
+ * Demo: @splashcodex/api-key-manager v5.5.1
  *
  * Shows the two-layer pattern:
  *   Layer 1: loadCentralEnv() loads keys from ~/codedex/env/
@@ -177,7 +183,65 @@ switch (command) {
         showStatus();
         break;
     case 'gateway':
-        require('./gateway');
+        {
+            const { startGateway } = require('./gateway');
+            let child = null;
+
+            async function shutdownGateway(signal) {
+                console.log(`\n\x1b[33m[gateway] Received ${signal}. Shutting down gracefully...\x1b[0m`);
+                if (child) {
+                    console.log('\x1b[33m[gateway] Terminating child process...\x1b[0m');
+                    child.kill('SIGTERM');
+                    setTimeout(() => {
+                        if (child && !child.killed) {
+                            child.kill('SIGKILL');
+                        }
+                    }, 5000);
+                }
+                console.log('\x1b[32m[gateway] Shutdown complete.\x1b[0m');
+                process.exit(0);
+            }
+
+            process.once('SIGTERM', () => shutdownGateway('SIGTERM'));
+            process.once('SIGINT', () => shutdownGateway('SIGINT'));
+
+            startGateway()
+                .then(({ server, vault }) => {
+                    // If the user passed a command after '--', spawn it
+                    if (childArgs && childArgs.length > 0) {
+                        const { spawn } = require('child_process');
+                        console.log(
+                            `\x1b[36m[gateway]\x1b[0m Spawning: \x1b[90m${childArgs.join(' ')}\x1b[0m\n`
+                        );
+                        child = spawn(childArgs[0], childArgs.slice(1), {
+                            stdio: 'inherit',
+                            shell: process.platform === 'win32',
+                        });
+
+                        child.on('exit', (code, sig) => {
+                            if (code !== null) {
+                                console.log(`\n\x1b[36m[gateway]\x1b[0m Child process exited with code ${code}`);
+                            } else if (sig) {
+                                console.log(`\n\x1b[36m[gateway]\x1b[0m Child process killed by signal ${sig}`);
+                            }
+                            vault.destroy();
+                            server.close().then(() => process.exit(code || 0));
+                        });
+
+                        child.on('error', (err) => {
+                            console.error(
+                                `\x1b[31m[gateway]\x1b[0m Failed to spawn child process: ${err.message}`
+                            );
+                            vault.destroy();
+                            server.close().then(() => process.exit(1));
+                        });
+                    }
+                })
+                .catch((err) => {
+                    console.error('\x1b[31m[FATAL]\x1b[0m', err);
+                    process.exit(1);
+                });
+        }
         break;
     default:
         printDocs();

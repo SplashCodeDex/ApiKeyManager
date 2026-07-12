@@ -39,8 +39,10 @@ describe('loadCentralEnv', () => {
     });
 
     test('handles quoted values', () => {
-        writeFileSync(join(TEST_ENV_DIR, 'test.env'),
-            'TEST_CENTRAL_QUOTED="hello world"\nTEST_CENTRAL_SINGLE=\'single quoted\'\n');
+        writeFileSync(
+            join(TEST_ENV_DIR, 'test.env'),
+            'TEST_CENTRAL_QUOTED="hello world"\nTEST_CENTRAL_SINGLE=\'single quoted\'\n',
+        );
 
         loadCentralEnv({ envDir: TEST_ENV_DIR });
 
@@ -57,8 +59,10 @@ describe('loadCentralEnv', () => {
     });
 
     test('skips comments and empty lines', () => {
-        writeFileSync(join(TEST_ENV_DIR, 'comments.env'),
-            '# This is a comment\n\nTEST_CENTRAL_A=value\n\n# Another comment\n');
+        writeFileSync(
+            join(TEST_ENV_DIR, 'comments.env'),
+            '# This is a comment\n\nTEST_CENTRAL_A=value\n\n# Another comment\n',
+        );
 
         const result = loadCentralEnv({ envDir: TEST_ENV_DIR });
 

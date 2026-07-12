@@ -1,6 +1,6 @@
 {
     "name": "@splashcodex/api-key-manager",
-    "version": "5.5.0",
+    "version": "5.5.1",
     "description": "Universal API Key Management Gateway with centralized env loader, provider presets, persistence, and multi-provider vault",
     "repository": {
         "type": "git",
@@ -149,11 +149,16 @@
     ],
     "scripts": {
         "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
-        "build": "npm run clean && tsc && tsc -p tsconfig.gateway.json",
+        "build": "npm run clean && tsc && tsc -p tsconfig.esm.json && tsc -p tsconfig.gateway.json",
         "test": "jest --verbose",
+        "test:coverage": "jest --coverage --verbose",
+        "lint": "eslint 'src/**/*.ts' 'gateway/**/*.ts' 'tests/**/*.ts'",
+        "lint:fix": "eslint 'src/**/*.ts' 'gateway/**/*.ts' 'tests/**/*.ts' --fix",
+        "format": "prettier --write 'src/**/*.ts' 'gateway/**/*.ts' 'tests/**/*.ts'",
+        "format:check": "prettier --check 'src/**/*.ts' 'gateway/**/*.ts' 'tests/**/*.ts'",
         "prepublishOnly": "npm run build && npm test",
         "prepack": "npm run build",
-        "postinstall": "node -e \"process.stdout.write('\\x1b[32m@splashcodex/api-key-manager v5.5.0\\x1b[0m\\n')\"",
+        "postinstall": "node -e \"process.stdout.write('\\x1b[32m@splashcodex/api-key-manager v5.5.1\\x1b[0m\\n')\"",
         "gateway": "ts-node gateway/server.ts",
         "gateway:dev": "npx nodemon --watch gateway/ --ext ts --exec ts-node gateway/server.ts"
     },
@@ -183,19 +188,26 @@
     "author": "Antigravity",
     "license": "ISC",
     "devDependencies": {
-        "@types/jest": "^30.0.0",
+        "@types/jest": "^29.5.14",
         "@types/node": "^20.10.5",
+        "@typescript-eslint/eslint-plugin": "^8.0.0",
+        "@typescript-eslint/parser": "^8.0.0",
+        "eslint": "^8.57.0",
         "jest": "^29.7.0",
+        "jest-util": "^29.7.0",
+        "prettier": "^3.3.0",
         "ts-jest": "^29.4.6",
         "ts-node": "^10.9.2",
         "typescript": "^5.3.3"
     },
     "dependencies": {
-        "@fastify/cors": "^11.2.0",
         "cockatiel": "^4.0.0",
         "dotenv": "^17.4.2",
         "eventsource-parser": "^3.1.0",
-        "fastify": "^5.7.4",
         "zod": "^4.4.3"
+    },
+    "optionalDependencies": {
+        "@fastify/cors": "^11.2.0",
+        "fastify": "^5.10.0"
     }
 }

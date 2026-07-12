@@ -1,10 +1,8 @@
 import { ApiKeyManager } from '../src/index';
 
 describe('ApiKeyManager v4.0 Semantic Cache', () => {
-
     test('Cosine Similarity math is accurate (vanilla)', () => {
-        // @ts-ignore - access private for testing
-        const cache = new (ApiKeyManager as any).prototype.constructor([]).semanticCache;
+        const cache = new (ApiKeyManager as any)([]).semanticCache;
         if (!cache) {
             // Re-creating instance for direct access to private math if needed
             // But let's just test via the public API behavior or instantiate SemanticCache directly if exported
@@ -21,8 +19,8 @@ describe('ApiKeyManager v4.0 Semantic Cache', () => {
         const manager = new ApiKeyManager(['key1'], {
             semanticCache: {
                 threshold: 0.9,
-                getEmbedding: mockEmbedding
-            }
+                getEmbedding: mockEmbedding,
+            },
         });
 
         // 1. First call (Cache Miss)
@@ -50,7 +48,7 @@ describe('ApiKeyManager v4.0 Semantic Cache', () => {
         });
 
         const manager = new ApiKeyManager(['key1'], {
-            semanticCache: { threshold: 0.9, getEmbedding: mockEmbedding }
+            semanticCache: { threshold: 0.9, getEmbedding: mockEmbedding },
         });
 
         await manager.execute(mockFn, { prompt: 'A' });
@@ -71,8 +69,8 @@ describe('ApiKeyManager v4.0 Semantic Cache', () => {
                     // Without a recursion guard, this would loop infinitely.
                     await manager.execute(async () => 'Nested Result', { prompt: text });
                     return [1, 0, 0];
-                }
-            }
+                },
+            },
         });
 
         // This should complete successfully because the internal execute()

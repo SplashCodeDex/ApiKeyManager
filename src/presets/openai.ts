@@ -57,7 +57,7 @@ export class OpenAIManager extends BasePreset {
         return BasePreset.createInstance(
             OpenAIManager as unknown as new (keys: string[], options: PresetOptions) => OpenAIManager,
             OpenAIManager.getDefaultOptions(),
-            overrides
+            overrides,
         ) as Result<OpenAIManager>;
     }
 

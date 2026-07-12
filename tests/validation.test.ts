@@ -9,8 +9,8 @@ describe('ApiKeyManagerOptions Validation', () => {
                 semanticCache: {
                     threshold: 0.9,
                     ttlMs: 60000,
-                    getEmbedding: async (text: string) => [0.1, 0.2]
-                }
+                    getEmbedding: async (text: string) => [0.1, 0.2],
+                },
             });
         }).not.toThrow();
     });
@@ -38,8 +38,8 @@ describe('ApiKeyManagerOptions Validation', () => {
             new ApiKeyManager(['key1'], {
                 semanticCache: {
                     threshold: 1.5,
-                    getEmbedding: async (t: string) => []
-                }
+                    getEmbedding: async (t: string) => [],
+                },
             });
         }).toThrow(/expected number to be <=1/);
 
@@ -47,8 +47,8 @@ describe('ApiKeyManagerOptions Validation', () => {
             new ApiKeyManager(['key1'], {
                 semanticCache: {
                     threshold: -0.1,
-                    getEmbedding: async (t: string) => []
-                }
+                    getEmbedding: async (t: string) => [],
+                },
             });
         }).toThrow(/expected number to be >=0/);
     });
@@ -57,9 +57,8 @@ describe('ApiKeyManagerOptions Validation', () => {
         expect(() => {
             new ApiKeyManager(['key1'], {
                 semanticCache: {
-                    // @ts-ignore
-                    getEmbedding: 'not-a-function'
-                }
+                    getEmbedding: 'not-a-function' as any,
+                },
             });
         }).toThrow(/Must be a function/);
     });
