@@ -97,7 +97,13 @@ function recordAudit(entry: AuditEntry): void {
 
 // ─── Fastify App ─────────────────────────────────────────────────────────────
 
-const app = Fastify({ logger: false });
+const app = Fastify({
+    logger: false,
+    // Explicit 100MB body limit — matches Fastify's default but makes it visible.
+    // This is more than enough for compressed tithe book images (~2MB each, max 4 = ~8MB).
+    // The limit applies to the entire request body, not individual files.
+    bodyLimit: 100 * 1024 * 1024,
+});
 
 app.register(cors, { origin: true });
 
