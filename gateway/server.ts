@@ -25,6 +25,7 @@ import {
     TransparentProxyRequest,
 } from './proxy';
 import { getAppId, sendError, log, RateLimiter } from './middleware';
+import { handleUnifiedRequest, handleUnifiedStream, UnifiedRequest, UnifiedResponse } from './router';
 
 // ─── Load centralized env FIRST (before anything reads process.env) ─────────
 const envResult = loadCentralEnv();
@@ -115,8 +116,9 @@ app.all('/:provider/*', async (request, reply) => {
     const provider = params.provider;
 
     // Reconstruct the upstream path and query string
-    const queryIndex = request.raw.url.indexOf('?');
-    const queryString = queryIndex !== -1 ? request.raw.url.substring(queryIndex) : '';
+    const rawUrl = request.raw.url || '';
+    const queryIndex = rawUrl.indexOf('?');
+    const queryString = queryIndex !== -1 ? rawUrl.substring(queryIndex) : '';
     const path = '/' + params['*'] + queryString;
 
     const providerDef = providerMap.get(provider);
@@ -320,6 +322,67 @@ app.get('/v1/audit', async (request, reply) => {
     }
 
     return reply.send({ count: filtered.length, total: auditLog.length, entries: filtered });
+});
+
+// ─── POST /v1/ai ─ Unified AI Endpoint ───────────────────────────────────────
+
+app.post('/v1/ai', async (request, reply) => {
+    const appId = getAppId(request);
+    const body = request.body as UnifiedRequest;
+
+    if (!body || (!body.messages && !body.contents)) {
+        return sendError(reply, 400, 'Request body must include "messages" or "contents".');
+    }
+
+    const rateResult = rateLimiter.check(appId);
+    if (!rateResult.allowed) {
+        return sendError(reply, 429, 'Rate limit exceeded.', {
+            retryAfterMs: Math.max(0, rateResult.resetAt - Date.now()),
+        });
+    }
+
+    // ── Streaming path ────────────────────────────────────────────────────
+    if (body.stream) {
+        log('info', appId, '→ STREAM /v1/ai');
+        const origin = (request.headers as Record<string, string>).origin || '*';
+        reply.raw.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            Connection: 'keep-alive',
+            'Access-Control-Allow-Origin': origin,
+            'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-App-Id, x-goog-api-key',
+            'Access-Control-Allow-Credentials': 'true',
+            'Access-Control-Expose-Headers': '*',
+        });
+
+        try {
+            const stream = handleUnifiedStream(vault, providerMap, body);
+            for await (const chunk of stream) {
+                reply.raw.write(chunk);
+            }
+            reply.raw.end();
+            log('info', appId, '← STREAM /v1/ai complete');
+        } catch (err: any) {
+            log('error', appId, `✗ STREAM /v1/ai: ${err.message}`);
+            try { reply.raw.write(sseErrorChunk(err.message)); } catch { /* closed */ }
+            reply.raw.end();
+        }
+        return;
+    }
+
+    // ── Non-streaming path ────────────────────────────────────────────────
+    const startTime = Date.now();
+    try {
+        const result: UnifiedResponse = await handleUnifiedRequest(vault, providerMap, body);
+        reply.send({
+            ...result,
+            latencyMs: Date.now() - startTime,
+        });
+    } catch (err: any) {
+        log('error', appId, `✗ /v1/ai: ${err.message}`);
+        return sendError(reply, err.status || 502, err.message);
+    }
 });
 
 // ─── GET /v1/rate-limits ─────────────────────────────────────────────────────
