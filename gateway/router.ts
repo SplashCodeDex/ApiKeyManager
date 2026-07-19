@@ -344,6 +344,24 @@ async function callGroq(
     return { text: result.choices?.[0]?.message?.content || '', model };
 }
 
+// ─── Soft Fallback Models ───────────────────────────────────────────────────
+
+/** Models that should fall back to gemini-3.1-flash-lite on 429 */
+const HEAVY_GEMINI_MODELS = new Set(['gemini-2.5-flash', 'gemini-3.5-flash']);
+
+/** The lightweight fallback model for Gemini intra-provider fallback */
+const LITE_FALLBACK_MODEL = 'gemini-3.1-flash-lite';
+
+/**
+ * Check if an error is a 429 / rate-limit / quota-exhausted error.
+ * Matches the same patterns used by ApiKeyManager.classifyError.
+ */
+function isQuotaError(error: unknown): boolean {
+    const msg = (error as any)?.message || String(error);
+    const status = (error as any)?.status || (error as any)?.response?.status;
+    return status === 429 || /429|quota|exhausted|resource.?exhausted|too.?many.?requests|rate.?limit/i.test(msg);
+}
+
 // ─── Non-streaming Router ───────────────────────────────────────────────────
 
 export async function handleUnifiedRequest(
@@ -364,7 +382,18 @@ export async function handleUnifiedRequest(
 
     switch (provider) {
         case 'gemini':
-            result = await vault.execute((key) => callGemini(key, providerDef, req), { provider, maxRetries: 3, timeoutMs: 60_000 });
+            try {
+                result = await vault.execute((key) => callGemini(key, providerDef, req), { provider, maxRetries: 3, timeoutMs: 60_000 });
+            } catch (err) {
+                // Soft fallback: if the heavy model hit a 429, retry with lite model
+                if (isQuotaError(err) && HEAVY_GEMINI_MODELS.has(model)) {
+                    log('warn', 'router', `↻ ${provider}/${model} 429 — falling back to ${LITE_FALLBACK_MODEL}`);
+                    req.model = LITE_FALLBACK_MODEL;
+                    result = await vault.execute((key) => callGemini(key, providerDef, req), { provider, maxRetries: 3, timeoutMs: 60_000 });
+                } else {
+                    throw err;
+                }
+            }
             break;
         case 'openai': case 'nvidia': case 'mistral': case 'deepseek': case 'together':
             result = await vault.execute((key) => callOpenAI(key, providerDef, req), { provider, maxRetries: 3, timeoutMs: 60_000 });
@@ -500,9 +529,23 @@ export async function* handleUnifiedStream(
     log('info', 'router', `→ STREAM ${provider}/${model}`);
 
     switch (provider) {
-        case 'gemini':
-            yield* vault.executeStream((key) => callGeminiStream(key, providerDef, req), { provider, maxRetries: 3, timeoutMs: 120_000 });
+        case 'gemini': {
+            let stream: AsyncGenerator<string, void, unknown>;
+            try {
+                stream = vault.executeStream((key) => callGeminiStream(key, providerDef, req), { provider, maxRetries: 3, timeoutMs: 120_000 });
+            } catch (err) {
+                // Soft fallback: if the heavy model hit a 429, retry with lite model
+                if (isQuotaError(err) && HEAVY_GEMINI_MODELS.has(model)) {
+                    log('warn', 'router', `↻ STREAM ${provider}/${model} 429 — falling back to ${LITE_FALLBACK_MODEL}`);
+                    req.model = LITE_FALLBACK_MODEL;
+                    stream = vault.executeStream((key) => callGeminiStream(key, providerDef, req), { provider, maxRetries: 3, timeoutMs: 120_000 });
+                } else {
+                    throw err;
+                }
+            }
+            yield* stream;
             break;
+        }
         case 'openai': case 'nvidia': case 'mistral': case 'deepseek': case 'together':
             yield* vault.executeStream((key) => callOpenAIStream(key, providerDef, req), { provider, maxRetries: 3, timeoutMs: 120_000 });
             break;
