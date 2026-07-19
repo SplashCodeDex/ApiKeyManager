@@ -42,6 +42,10 @@ export interface UnifiedRequest {
     messages?: UnifiedMessage[];
     systemInstruction?: string;
     contents?: string;
+    /** Base64-encoded image data (without the data:image/xxx;base64, prefix) */
+    imageBase64?: string;
+    /** MIME type of the image (e.g. "image/jpeg") */
+    imageMimeType?: string;
     tools?: UnifiedTool[];
     responseFormat?: 'text' | 'json';
     temperature?: number;
@@ -75,6 +79,7 @@ const PROVIDER_CAPABILITIES: Record<string, ProviderCap> = {
 };
 
 function isVisionRequest(req: UnifiedRequest): boolean {
+    if (req.imageBase64) return true;
     if (req.messages) {
         for (const msg of req.messages) {
             if (Array.isArray(msg.content)) {
@@ -161,12 +166,25 @@ async function callGemini(
     const model = req.model || Object.keys(providerDef.models)[0] || 'gemini-2.5-flash';
 
     if (req.type === 'generate') {
-        const result = await client.models.generateContent({
-            model,
-            contents: req.contents || req.messages?.map(m => ({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let contents: any;
+        if (req.imageBase64) {
+            contents = [{
+                parts: [
+                    { text: req.contents || '' },
+                    { inlineData: { data: req.imageBase64, mimeType: req.imageMimeType || 'image/jpeg' } }
+                ]
+            }];
+        } else {
+            contents = req.contents || req.messages?.map(m => ({
                 role: m.role === 'assistant' ? 'model' : m.role,
                 parts: typeof m.content === 'string' ? [{ text: m.content }] : m.content,
-            })) || '',
+            })) || '';
+        }
+
+        const result = await client.models.generateContent({
+            model,
+            contents,
             config: {
                 systemInstruction: req.systemInstruction,
                 temperature: req.temperature,
@@ -236,7 +254,17 @@ async function callOpenAI(
             }
         }
     } else if (req.contents) {
-        messages.push({ role: 'user', content: req.contents });
+        if (req.imageBase64) {
+            messages.push({
+                role: 'user',
+                content: [
+                    { type: 'text', text: req.contents },
+                    { type: 'image_url', image_url: { url: `data:${req.imageMimeType || 'image/jpeg'};base64,${req.imageBase64}`, detail: 'auto' } }
+                ]
+            });
+        } else {
+            messages.push({ role: 'user', content: req.contents });
+        }
     }
     const result = await client.chat.completions.create({
         model, messages, temperature: req.temperature ?? 0.7, max_tokens: req.maxTokens,
@@ -271,7 +299,17 @@ async function callAnthropic(
             }
         }
     } else if (req.contents) {
-        messages.push({ role: 'user', content: req.contents });
+        if (req.imageBase64) {
+            messages.push({
+                role: 'user',
+                content: [
+                    { type: 'text', text: req.contents },
+                    { type: 'image', source: { type: 'base64' as const, media_type: (req.imageMimeType || 'image/jpeg') as any, data: req.imageBase64 } }
+                ]
+            });
+        } else {
+            messages.push({ role: 'user', content: req.contents });
+        }
     }
     const result = await client.messages.create({
         model, messages, system: req.systemInstruction, max_tokens: req.maxTokens || 4096, temperature: req.temperature,
