@@ -96,6 +96,11 @@
         "./gateway/server": {
             "import": "./bin/gateway.js",
             "require": "./bin/gateway.js"
+        },
+        "./gateway/build": {
+            "import": "./dist/gateway/gateway/server.js",
+            "require": "./dist/gateway/gateway/server.js",
+            "types": "./dist/gateway/gateway/server.d.ts"
         }
     },
     "typesVersions": {

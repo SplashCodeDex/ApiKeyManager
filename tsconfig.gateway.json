@@ -10,13 +10,12 @@
         "skipLibCheck": true,
         "forceConsistentCasingInFileNames": true,
         "outDir": "./dist/gateway",
-        "rootDir": "./gateway"
+        "rootDir": "."
     },
     "include": [
         "gateway/**/*"
     ],
     "exclude": [
-        "node_modules",
-        "gateway/server.ts"
+        "node_modules"
     ]
 }

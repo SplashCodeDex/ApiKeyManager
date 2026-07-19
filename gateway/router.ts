@@ -355,6 +355,9 @@ export async function handleUnifiedRequest(
     const providerDef = providerDefs.get(provider);
     if (!providerDef) throw new Error(`Provider definition not found: ${provider}`);
 
+    // Ensure downstream SDK callers use the dynamically selected model
+    req.model = model;
+
     log('info', 'router', `→ ${provider}/${model} (${req.type})`);
 
     let result: { text: string; model: string };
@@ -490,6 +493,9 @@ export async function* handleUnifiedStream(
     const { provider, model } = pickProvider(vault, req, providerDefs);
     const providerDef = providerDefs.get(provider);
     if (!providerDef) throw new Error(`Provider definition not found: ${provider}`);
+
+    // Ensure downstream SDK callers use the dynamically selected model
+    req.model = model;
 
     log('info', 'router', `→ STREAM ${provider}/${model}`);
 

@@ -1,0 +1,936 @@
+"use strict";
+/**
+ * Universal ApiKeyManager v5.4 — Ecosystem Edition
+ * Implements: Rotation, Circuit Breaker, Persistence, Exponential Backoff, Strategies,
+ *             Event Emitter, Fallback, execute(), Timeout, Auto-Retry, Provider Tags,
+ *             Health Checks, Bulkhead/Concurrency
+ * NEW in v5.4: Production-hardened API Gateway with transparent proxy,
+ *              per-app rate limiting, graceful shutdown, provider extensibility,
+ *              request audit trail, and SSE error resilience.
+ * v5.0: Provider Presets (GeminiManager, OpenAIManager, MultiManager),
+ *       Built-in Persistence (FileStorage, MemoryStorage)
+ * Gemini-Specific: finishReason handling, Safety blocks, RECITATION detection
+ * Infrastructure: cockatiel (Bulkhead queueing + ExponentialBackoff w/ decorrelated jitter)
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.ApiKeyManager = exports.SemanticCache = exports.LatencyStrategy = exports.WeightedStrategy = exports.StandardStrategy = exports.AllKeysExhaustedError = exports.BulkheadRejectionError = exports.TimeoutError = exports.ApiKeyManagerOptionsSchema = exports.MemoryStorage = exports.FileStorage = void 0;
+const events_1 = require("events");
+const cockatiel_1 = require("cockatiel");
+const zod_1 = require("zod");
+// ─── Re-exports: Persistence ─────────────────────────────────────────────────
+// Persistence adapters can be imported from root or via subpath
+var file_1 = require("./persistence/file");
+Object.defineProperty(exports, "FileStorage", { enumerable: true, get: function () { return file_1.FileStorage; } });
+var memory_1 = require("./persistence/memory");
+Object.defineProperty(exports, "MemoryStorage", { enumerable: true, get: function () { return memory_1.MemoryStorage; } });
+exports.ApiKeyManagerOptionsSchema = zod_1.z
+    .object({
+    storage: zod_1.z.any().optional(),
+    strategy: zod_1.z.any().optional(), // Expected: LoadBalancingStrategy
+    fallbackFn: zod_1.z.custom((val) => typeof val === 'function', 'Must be a function').optional(),
+    /** Max concurrent execute() calls. When limit is reached, excess requests queue (up to concurrencyQueueSize) then reject. */
+    concurrency: zod_1.z.number().int().positive().optional(),
+    /**
+     * Maximum number of requests to hold in the bulkhead queue when all concurrency slots are busy.
+     * - Default: `0` — excess requests are rejected immediately (preserves v3 behavior).
+     * - Set to a positive number to allow requests to wait for a free slot.
+     *
+     * @example
+     * // Queue up to 10 waiting requests before rejecting
+     * new ApiKeyManager(keys, { concurrency: 5, concurrencyQueueSize: 10 })
+     */
+    concurrencyQueueSize: zod_1.z.number().int().nonnegative().optional(),
+    semanticCache: zod_1.z
+        .object({
+        threshold: zod_1.z.number().min(0).max(1).optional(), // Similarity threshold (0.0 - 1.0, default 0.95)
+        ttlMs: zod_1.z.number().int().positive().optional(), // Cache TTL
+        getEmbedding: zod_1.z.custom((val) => typeof val === 'function', 'Must be a function'),
+    })
+        .optional(),
+})
+    .passthrough();
+// ─── Config ──────────────────────────────────────────────────────────────────
+const CONFIG = {
+    MAX_CONSECUTIVE_FAILURES: 5,
+    COOLDOWN_TRANSIENT: 60 * 1000, // 1 minute
+    COOLDOWN_QUOTA: 5 * 60 * 1000, // 5 minutes (default if no Retry-After)
+    COOLDOWN_QUOTA_DAILY: 60 * 60 * 1000, // 1 hour for RPD exhaustion
+    HALF_OPEN_TEST_DELAY: 60 * 1000, // 1 minute after open
+    MAX_BACKOFF: 64 * 1000, // 64 seconds max
+    BASE_BACKOFF: 1000, // 1 second base
+    DEAD_KEY_TTL: 60 * 60 * 1000, // 1 hour — DEAD keys get retested after this
+};
+// Error classification patterns
+const ERROR_PATTERNS = {
+    isQuotaError: /429|quota|exhausted|resource.?exhausted|too.?many.?requests|rate.?limit/i,
+    isAuthError: /403|permission.?denied|invalid.?api.?key|unauthorized|unauthenticated/i,
+    isSafetyBlock: /safety|blocked|recitation|harmful/i,
+    isTransient: /500|502|503|504|internal|unavailable|deadline|timeout|overloaded/i,
+    isBadRequest: /400|invalid.?argument|failed.?precondition|malformed|not.?found|404/i,
+};
+// ─── Custom Errors ───────────────────────────────────────────────────────────
+class TimeoutError extends Error {
+    constructor(ms) {
+        super(`Request timed out after ${ms}ms`);
+        this.name = 'TimeoutError';
+    }
+}
+exports.TimeoutError = TimeoutError;
+class BulkheadRejectionError extends Error {
+    constructor() {
+        super('Bulkhead capacity exceeded — too many concurrent requests');
+        this.name = 'BulkheadRejectionError';
+    }
+}
+exports.BulkheadRejectionError = BulkheadRejectionError;
+class AllKeysExhaustedError extends Error {
+    constructor() {
+        super('All API keys exhausted — no healthy keys available');
+        this.name = 'AllKeysExhaustedError';
+    }
+}
+exports.AllKeysExhaustedError = AllKeysExhaustedError;
+/**
+ * Standard Strategy: Least Failed > Least Recently Used
+ */
+class StandardStrategy {
+    next(candidates) {
+        candidates.sort((a, b) => {
+            if (a.failCount !== b.failCount)
+                return a.failCount - b.failCount;
+            return a.lastUsed - b.lastUsed;
+        });
+        return candidates[0] || null;
+    }
+}
+exports.StandardStrategy = StandardStrategy;
+/**
+ * Weighted Strategy: Probabilistic selection based on weight
+ * Higher weight = Higher chance of selection
+ */
+class WeightedStrategy {
+    next(candidates) {
+        if (candidates.length === 0)
+            return null;
+        const totalWeight = candidates.reduce((sum, k) => sum + k.weight, 0);
+        let random = Math.random() * totalWeight;
+        for (const key of candidates) {
+            random -= key.weight;
+            if (random <= 0)
+                return key;
+        }
+        return candidates[0]; // Fallback
+    }
+}
+exports.WeightedStrategy = WeightedStrategy;
+/**
+ * Latency Strategy: Pick lowest average latency with LRU tie-break
+ */
+class LatencyStrategy {
+    next(candidates) {
+        if (candidates.length === 0)
+            return null;
+        candidates.sort((a, b) => {
+            if (a.averageLatency !== b.averageLatency)
+                return a.averageLatency - b.averageLatency;
+            return a.lastUsed - b.lastUsed; // LRU tie-break
+        });
+        return candidates[0];
+    }
+}
+exports.LatencyStrategy = LatencyStrategy;
+// ─── Semantic Engine ─────────────────────────────────────────────────────────
+/**
+ * High-performance Vanilla Semantic Cache
+ * Implements Cosine Similarity math from scratch.
+ */
+class SemanticCache {
+    entries = [];
+    threshold;
+    ttlMs;
+    constructor(threshold = 0.95, ttlMs = 24 * 60 * 60 * 1000) {
+        this.threshold = threshold;
+        this.ttlMs = ttlMs;
+    }
+    set(prompt, vector, response) {
+        // Expire old entry for same prompt if exists
+        this.entries = this.entries.filter((e) => e.prompt !== prompt);
+        this.entries.push({
+            prompt,
+            vector,
+            response,
+            timestamp: Date.now(),
+        });
+        // Optional: Cap size to prevent memory leaks
+        if (this.entries.length > 500)
+            this.entries.shift();
+    }
+    get(vector) {
+        const now = Date.now();
+        let bestMatch = null;
+        let highestSimilarity = -1;
+        for (let i = this.entries.length - 1; i >= 0; i--) {
+            const entry = this.entries[i];
+            // Check TTL
+            if (now - entry.timestamp > this.ttlMs) {
+                this.entries.splice(i, 1);
+                continue;
+            }
+            const similarity = this.calculateCosineSimilarity(vector, entry.vector);
+            if (similarity >= this.threshold && similarity > highestSimilarity) {
+                highestSimilarity = similarity;
+                bestMatch = entry;
+            }
+        }
+        return bestMatch ? bestMatch.response : null;
+    }
+    /**
+     * Vanilla Cosine Similarity: (A·B) / (||A|| * ||B||)
+     */
+    calculateCosineSimilarity(vecA, vecB) {
+        if (vecA.length !== vecB.length)
+            return 0;
+        let dotProduct = 0;
+        let normA = 0;
+        let normB = 0;
+        for (let i = 0; i < vecA.length; i++) {
+            dotProduct += vecA[i] * vecB[i];
+            normA += vecA[i] * vecA[i];
+            normB += vecB[i] * vecB[i];
+        }
+        const denominator = Math.sqrt(normA) * Math.sqrt(normB);
+        return denominator === 0 ? 0 : dotProduct / denominator;
+    }
+}
+exports.SemanticCache = SemanticCache;
+// ─── Main Class ──────────────────────────────────────────────────────────────
+class ApiKeyManager extends events_1.EventEmitter {
+    keys = [];
+    storageKey = 'api_rotation_state_v2';
+    storage;
+    strategy;
+    fallbackFn;
+    // Bulkhead state — managed by cockatiel BulkheadPolicy
+    // Provides FIFO queueing (requests wait for a slot) instead of immediate rejection
+    bulkheadPolicy = null;
+    // Health check state
+    healthCheckFn;
+    healthCheckInterval;
+    // Debounced persistence — avoids writeFileSync on every single call
+    _saveTimer;
+    _saveDirty = false;
+    // Semantic Cache v4
+    semanticCache;
+    getEmbeddingFn;
+    _isResolvingEmbedding = false; // Recursion guard
+    /**
+     * Constructor accepts an options object for configuration.
+     *
+     * @example
+     *   new ApiKeyManager(keys, { storage, strategy, fallbackFn, concurrency })
+     */
+    constructor(initialKeys, options) {
+        super();
+        // Normalize to options object
+        let opts = options ?? {};
+        // Validate options with Zod (will throw meaningful errors on invalid configs)
+        opts = exports.ApiKeyManagerOptionsSchema.parse(opts);
+        this.storage = opts.storage || {
+            getItem: () => null,
+            setItem: () => { },
+        };
+        this.strategy = opts.strategy || new StandardStrategy();
+        this.fallbackFn = opts.fallbackFn;
+        // Build cockatiel bulkhead.
+        // queueSize defaults to 0 (immediate rejection — preserves existing API contract).
+        // Set concurrencyQueueSize > 0 to opt-in to queuing instead of rejection.
+        const maxConcurrency = opts.concurrency ?? Infinity;
+        const queueSize = opts.concurrencyQueueSize ?? 0;
+        if (maxConcurrency !== Infinity) {
+            this.bulkheadPolicy = (0, cockatiel_1.bulkhead)(maxConcurrency, queueSize);
+            this.bulkheadPolicy.onReject(() => {
+                this.emit('bulkheadRejected');
+            });
+        }
+        // Init Semantic Cache if provided
+        if (opts.semanticCache) {
+            this.semanticCache = new SemanticCache(opts.semanticCache.threshold, opts.semanticCache.ttlMs);
+            this.getEmbeddingFn = opts.semanticCache.getEmbedding;
+        }
+        // Normalize input to objects
+        let inputKeys = [];
+        if (initialKeys.length > 0 && typeof initialKeys[0] === 'string') {
+            inputKeys = initialKeys.flatMap((k) => k.split(',').map((s) => ({ key: s.trim(), weight: 1.0, provider: 'default' })));
+        }
+        else {
+            inputKeys = initialKeys;
+        }
+        // Deduplicate
+        const uniqueMap = new Map();
+        inputKeys.forEach((k) => {
+            if (k.key.length > 0)
+                uniqueMap.set(k.key, { weight: k.weight ?? 1.0, provider: k.provider ?? 'default' });
+        });
+        if (uniqueMap.size < inputKeys.length) {
+            console.warn(`[ApiKeyManager] Removed ${inputKeys.length - uniqueMap.size} duplicate/empty keys.`);
+        }
+        this.keys = Array.from(uniqueMap.entries()).map(([key, meta]) => ({
+            key,
+            failCount: 0,
+            failedAt: null,
+            isQuotaError: false,
+            circuitState: 'CLOSED',
+            lastUsed: 0,
+            successCount: 0,
+            totalRequests: 0,
+            halfOpenTestTime: null,
+            customCooldown: null,
+            weight: meta.weight,
+            averageLatency: 0,
+            totalLatency: 0,
+            latencySamples: 0,
+            provider: meta.provider,
+        }));
+        this.loadState();
+    }
+    // ─── Error Classification ────────────────────────────────────────────────
+    /**
+     * CLASSIFIES an error to determine handling strategy
+     */
+    classifyError(error, finishReason) {
+        const status = error?.status || error?.response?.status;
+        const message = error?.message || error?.error?.message || String(error);
+        // 1. Check finishReason first
+        if (finishReason === 'SAFETY')
+            return { type: 'SAFETY', retryable: false, cooldownMs: 0, markKeyFailed: false, markKeyDead: false };
+        if (finishReason === 'RECITATION')
+            return { type: 'RECITATION', retryable: false, cooldownMs: 0, markKeyFailed: false, markKeyDead: false };
+        // 2. Check timeout
+        if (error instanceof TimeoutError || error?.name === 'TimeoutError') {
+            return {
+                type: 'TIMEOUT',
+                retryable: true,
+                cooldownMs: CONFIG.COOLDOWN_TRANSIENT,
+                markKeyFailed: true,
+                markKeyDead: false,
+            };
+        }
+        // 3. Check HTTP status codes
+        if (status === 403 || ERROR_PATTERNS.isAuthError.test(message)) {
+            return { type: 'AUTH', retryable: false, cooldownMs: Infinity, markKeyFailed: true, markKeyDead: true };
+        }
+        if (status === 429 || ERROR_PATTERNS.isQuotaError.test(message)) {
+            const retryAfter = this.parseRetryAfter(error);
+            return {
+                type: 'QUOTA',
+                retryable: true,
+                cooldownMs: retryAfter || CONFIG.COOLDOWN_QUOTA,
+                markKeyFailed: true,
+                markKeyDead: false,
+            };
+        }
+        if (status === 400 || ERROR_PATTERNS.isBadRequest.test(message)) {
+            return { type: 'BAD_REQUEST', retryable: false, cooldownMs: 0, markKeyFailed: false, markKeyDead: false };
+        }
+        if (ERROR_PATTERNS.isTransient.test(message) || [500, 502, 503, 504].includes(status)) {
+            return {
+                type: 'TRANSIENT',
+                retryable: true,
+                cooldownMs: CONFIG.COOLDOWN_TRANSIENT,
+                markKeyFailed: true,
+                markKeyDead: false,
+            };
+        }
+        return {
+            type: 'UNKNOWN',
+            retryable: true,
+            cooldownMs: CONFIG.COOLDOWN_TRANSIENT,
+            markKeyFailed: true,
+            markKeyDead: false,
+        };
+    }
+    parseRetryAfter(error) {
+        const retryAfter = error?.response?.headers?.['retry-after'] || error?.headers?.['retry-after'] || error?.retryAfter;
+        if (!retryAfter)
+            return null;
+        const seconds = parseInt(retryAfter, 10);
+        if (!isNaN(seconds))
+            return seconds * 1000;
+        const date = Date.parse(retryAfter);
+        if (!isNaN(date))
+            return Math.max(0, date - Date.now());
+        return null;
+    }
+    // ─── Cooldown ────────────────────────────────────────────────────────────
+    isOnCooldown(k) {
+        if (k.circuitState === 'DEAD')
+            return true;
+        const now = Date.now();
+        if (k.circuitState === 'OPEN') {
+            if (k.halfOpenTestTime && now >= k.halfOpenTestTime) {
+                k.circuitState = 'HALF_OPEN';
+                this.emit('circuitHalfOpen', k.key);
+                return false;
+            }
+            return true;
+        }
+        if (k.failedAt) {
+            if (k.customCooldown && now - k.failedAt < k.customCooldown)
+                return true;
+            const cooldown = k.isQuotaError ? CONFIG.COOLDOWN_QUOTA : CONFIG.COOLDOWN_TRANSIENT;
+            if (now - k.failedAt < cooldown)
+                return true;
+        }
+        return false;
+    }
+    // ─── Key Selection ───────────────────────────────────────────────────────
+    getKey() {
+        // 1. Filter out dead and cooling down keys
+        const candidates = this.keys.filter((k) => k.circuitState !== 'DEAD' && !this.isOnCooldown(k));
+        if (candidates.length === 0) {
+            // FALLBACK: Return oldest failed key (excluding DEAD)
+            const nonDead = this.keys.filter((k) => k.circuitState !== 'DEAD');
+            if (nonDead.length === 0) {
+                this.emit('allKeysExhausted');
+                return null;
+            }
+            return nonDead.sort((a, b) => (a.failedAt || 0) - (b.failedAt || 0))[0]?.key || null;
+        }
+        // 2. Delegate to Strategy
+        const selected = this.strategy.next(candidates);
+        if (selected) {
+            selected.lastUsed = Date.now();
+            this.saveState();
+            return selected.key;
+        }
+        return null;
+    }
+    /**
+     * Get a key filtered by provider tag
+     */
+    getKeyByProvider(provider) {
+        const candidates = this.keys.filter((k) => k.provider === provider && k.circuitState !== 'DEAD' && !this.isOnCooldown(k));
+        if (candidates.length === 0)
+            return null;
+        const selected = this.strategy.next(candidates);
+        if (selected) {
+            selected.lastUsed = Date.now();
+            this.saveState();
+            return selected.key;
+        }
+        return null;
+    }
+    getKeyCount() {
+        return this.keys.filter((k) => k.circuitState !== 'DEAD').length;
+    }
+    // ─── Mark Success / Failed ───────────────────────────────────────────────
+    /**
+     * Mark success AND update latency stats
+     * @param durationMs Duration of the request in milliseconds
+     */
+    markSuccess(key, durationMs) {
+        const k = this.keys.find((x) => x.key === key);
+        if (!k)
+            return;
+        const wasRecovering = k.circuitState !== 'CLOSED' && k.circuitState !== 'DEAD';
+        if (wasRecovering) {
+            console.log(`[Key Recovered] ...${key.slice(-4)}`);
+            this.emit('keyRecovered', key);
+        }
+        k.circuitState = 'CLOSED';
+        k.failCount = 0;
+        k.failedAt = null;
+        k.isQuotaError = false;
+        k.customCooldown = null;
+        k.successCount++;
+        k.totalRequests++;
+        if (durationMs !== undefined) {
+            k.totalLatency += durationMs;
+            k.latencySamples++;
+            k.averageLatency = k.totalLatency / k.latencySamples;
+        }
+        this.saveState();
+    }
+    markFailed(key, classification) {
+        const k = this.keys.find((x) => x.key === key);
+        if (!k || k.circuitState === 'DEAD')
+            return;
+        if (!classification.markKeyFailed)
+            return;
+        k.failedAt = Date.now();
+        k.failCount++;
+        k.totalRequests++;
+        k.isQuotaError = classification.type === 'QUOTA';
+        k.customCooldown = classification.cooldownMs || null;
+        if (classification.markKeyDead) {
+            k.circuitState = 'DEAD';
+            console.error(`[Key DEAD] ...${key.slice(-4)} - Permanently removed`);
+            this.emit('keyDead', key);
+        }
+        else {
+            // State Transitions
+            if (k.circuitState === 'HALF_OPEN') {
+                k.circuitState = 'OPEN';
+                k.halfOpenTestTime = Date.now() + CONFIG.HALF_OPEN_TEST_DELAY;
+                this.emit('circuitOpen', key);
+            }
+            else if (k.failCount >= CONFIG.MAX_CONSECUTIVE_FAILURES || classification.type === 'QUOTA') {
+                k.circuitState = 'OPEN';
+                k.halfOpenTestTime = Date.now() + (classification.cooldownMs || CONFIG.HALF_OPEN_TEST_DELAY);
+                this.emit('circuitOpen', key);
+            }
+        }
+        this.saveState();
+    }
+    // ─── Backoff ─────────────────────────────────────────────────────────────
+    /**
+     * Calculate exponential backoff with decorrelated jitter using cockatiel.
+     * Decorrelated jitter avoids thundering-herd by randomizing retry intervals
+     * independent of the previous delay, which is statistically superior to
+     * simple `random * exponential` jitter.
+     *
+     * @param attempt - Zero-indexed attempt number
+     */
+    _backoffFactory = new cockatiel_1.ExponentialBackoff({
+        initialDelay: CONFIG.BASE_BACKOFF,
+        maxDelay: CONFIG.MAX_BACKOFF,
+        generator: cockatiel_1.decorrelatedJitterGenerator,
+    });
+    calculateBackoff(attempt) {
+        // ExponentialBackoff is a linked-list: _backoffFactory.next() returns an
+        // IBackoff node with { duration, next() }. Walk `attempt` steps to get
+        // the correctly scaled delay. Uses decorrelated jitter (superior to random*exp).
+        // We cast via `any` to bypass the interface vs concrete class arg-count conflict.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let node = this._backoffFactory.next();
+        for (let i = 0; i < attempt; i++) {
+            node = node.next();
+        }
+        return node.duration;
+    }
+    // ─── Stats ───────────────────────────────────────────────────────────────
+    getStats() {
+        const total = this.keys.length;
+        const dead = this.keys.filter((k) => k.circuitState === 'DEAD').length;
+        const cooling = this.keys.filter((k) => k.circuitState === 'OPEN' || k.circuitState === 'HALF_OPEN').length;
+        const healthy = total - dead - cooling;
+        return { total, healthy, cooling, dead };
+    }
+    _getKeys() {
+        return this.keys;
+    }
+    // ─── execute() Wrapper ───────────────────────────────────────────────────
+    /**
+     * Wraps the entire API call lifecycle into a single method.
+     *
+     * @example
+     *   const result = await manager.execute(
+     *     (key) => fetch(`https://api.example.com?key=${key}`),
+     *     { maxRetries: 3, timeoutMs: 5000 }
+     *   );
+     */
+    async execute(fn, options) {
+        const maxRetries = options?.maxRetries ?? 0;
+        const timeoutMs = options?.timeoutMs;
+        const finishReason = options?.finishReason;
+        const prompt = options?.prompt;
+        const provider = options?.provider;
+        // 1. Semantic Cache Check (Mastermind Edition)
+        // Guard: skip cache if we're already resolving an embedding to prevent
+        // infinite recursion when getEmbeddingFn calls execute() internally.
+        let currentPromptVector = null;
+        if (this.semanticCache && this.getEmbeddingFn && prompt && !this._isResolvingEmbedding) {
+            try {
+                this._isResolvingEmbedding = true;
+                currentPromptVector = await this.getEmbeddingFn(prompt);
+                const cachedResponse = this.semanticCache.get(currentPromptVector);
+                if (cachedResponse !== null) {
+                    console.log(`[Semantic Cache HIT] for prompt: "${prompt.slice(0, 30)}..."`);
+                    this.emit('executeSuccess', 'CACHE_HIT', 0);
+                    return cachedResponse;
+                }
+            }
+            catch (e) {
+                console.warn('[Semantic Cache Check Failed] Proceeding to live API', e);
+            }
+            finally {
+                this._isResolvingEmbedding = false;
+            }
+        }
+        // 2. Bulkhead check — if policy exists, cockatiel queues excess requests
+        // instead of immediately rejecting them (queue drains as slots free up)
+        if (this.bulkheadPolicy) {
+            try {
+                const result = await this.bulkheadPolicy.execute(async () => {
+                    return await this._executeWithSemanticAndRetry(fn, maxRetries, timeoutMs, finishReason, provider, prompt, currentPromptVector);
+                });
+                return result;
+            }
+            catch (err) {
+                if (err instanceof cockatiel_1.BulkheadRejectedError) {
+                    throw new BulkheadRejectionError();
+                }
+                throw err;
+            }
+        }
+        // No concurrency limit configured — run directly
+        return this._executeWithSemanticAndRetry(fn, maxRetries, timeoutMs, finishReason, provider, prompt, currentPromptVector);
+    }
+    /**
+     * Executes a streaming function (AsyncGenerator) with retry logic and semantic caching.
+     *
+     * @example
+     *   const stream = await manager.executeStream(async (key) => {
+     *     return await gemini.generateContentStream({ prompt: "..." });
+     *   }, { prompt: "..." });
+     *
+     *   for await (const chunk of stream) {
+     *     console.log(chunk.text());
+     *   }
+     */
+    async *executeStream(fn, options) {
+        const maxRetries = options?.maxRetries ?? 0;
+        const timeoutMs = options?.timeoutMs;
+        const finishReason = options?.finishReason;
+        const prompt = options?.prompt;
+        const provider = options?.provider;
+        // 1. Semantic Cache Check
+        let currentPromptVector = null;
+        if (this.semanticCache && this.getEmbeddingFn && prompt && !this._isResolvingEmbedding) {
+            try {
+                this._isResolvingEmbedding = true;
+                currentPromptVector = await this.getEmbeddingFn(prompt);
+                const cachedResponse = this.semanticCache.get(currentPromptVector);
+                if (cachedResponse !== null) {
+                    console.log(`[Semantic Cache HIT] Streaming cached response for prompt: "${prompt.slice(0, 30)}..."`);
+                    this.emit('executeSuccess', 'CACHE_HIT_STREAM', 0);
+                    // Replay full response as a single chunk (or iterate if it's an array)
+                    if (Array.isArray(cachedResponse)) {
+                        for (const chunk of cachedResponse)
+                            yield chunk;
+                    }
+                    else {
+                        yield cachedResponse;
+                    }
+                    return;
+                }
+            }
+            catch (e) {
+                console.warn('[Semantic Cache Check Failed] Proceeding to live stream', e);
+            }
+            finally {
+                this._isResolvingEmbedding = false;
+            }
+        }
+        // 2. Bulkhead check — gate streaming with bulkhead slot management.
+        // Async generators can't be wrapped in bulkheadPolicy.execute() (which expects
+        // a Promise), so we check availability and track manually.
+        const useBulkhead = this.bulkheadPolicy !== null;
+        if (useBulkhead) {
+            const slots = this.bulkheadPolicy;
+            const hasSlot = slots.executionSlots > 0 || slots.queueSlots > 0;
+            if (!hasSlot) {
+                this.emit('bulkheadRejected');
+                throw new BulkheadRejectionError();
+            }
+        }
+        const accumulatedChunks = [];
+        let lastError;
+        try {
+            for (let attempt = 0; attempt <= maxRetries; attempt++) {
+                const key = provider ? this.getKeyByProvider(provider) : this.getKey();
+                if (!key) {
+                    if (this.fallbackFn) {
+                        this.emit('fallback', 'all keys exhausted (stream)');
+                        yield this.fallbackFn();
+                        return;
+                    }
+                    throw new AllKeysExhaustedError();
+                }
+                let iterator;
+                try {
+                    // Start the generator
+                    iterator = fn(key);
+                    // PRIME THE ITERATOR:
+                    // Try to get the first chunk. This forces the generator body to
+                    // execute until the first 'yield' or until it throws.
+                    const firstResult = await iterator.next();
+                    // If we got here, the INITIAL connection/logic succeeded!
+                    if (firstResult.done)
+                        return;
+                    // Yield first chunk
+                    yield firstResult.value;
+                    if (this.semanticCache && prompt)
+                        accumulatedChunks.push(firstResult.value);
+                    // Yield rest of chunks
+                    for await (const chunk of iterator) {
+                        yield chunk;
+                        if (this.semanticCache && prompt)
+                            accumulatedChunks.push(chunk);
+                    }
+                    // Success! Store in cache
+                    if (this.semanticCache && prompt && currentPromptVector && accumulatedChunks.length > 0) {
+                        this.semanticCache.set(prompt, currentPromptVector, accumulatedChunks);
+                    }
+                    return; // Full success, exit retry loop
+                }
+                catch (error) {
+                    lastError = error;
+                    const classification = this.classifyError(error, finishReason);
+                    this.markFailed(key, classification);
+                    this.emit('executeFailed', key, error);
+                    // Note: If we already yielded the FIRST chunk, we CANNOT retry the connection
+                    // because the user has already received data. Mid-stream failures propagate.
+                    if (accumulatedChunks.length > 0) {
+                        throw error;
+                    }
+                    if (!classification.retryable || attempt >= maxRetries) {
+                        if (this.fallbackFn && attempt >= maxRetries) {
+                            this.emit('fallback', 'max retries exceeded (stream)');
+                            yield this.fallbackFn();
+                            return;
+                        }
+                        throw error;
+                    }
+                    const delay = this.calculateBackoff(attempt);
+                    this.emit('retry', key, attempt + 1, delay);
+                    await this._sleep(delay);
+                }
+            }
+        }
+        finally {
+            // Slot is freed automatically when the generator completes/throws
+        }
+        throw lastError;
+    }
+    /**
+     * Helper: stores result in semantic cache then returns it.
+     * Called by the bulkhead execute() callback and the no-bulkhead path.
+     */
+    async _executeWithSemanticAndRetry(fn, maxRetries, timeoutMs, finishReason, provider, prompt, currentPromptVector) {
+        const result = await this._executeWithRetry(fn, maxRetries, timeoutMs, finishReason, provider);
+        // Store in Semantic Cache on success
+        if (this.semanticCache && prompt && currentPromptVector) {
+            this.semanticCache.set(prompt, currentPromptVector, result);
+        }
+        return result;
+    }
+    async _executeWithRetry(fn, maxRetries, timeoutMs, finishReason, provider) {
+        let lastError;
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+            const key = provider ? this.getKeyByProvider(provider) : this.getKey();
+            if (!key) {
+                // All keys exhausted — try fallback
+                if (this.fallbackFn) {
+                    this.emit('fallback', 'all keys exhausted');
+                    return this.fallbackFn();
+                }
+                throw new AllKeysExhaustedError();
+            }
+            try {
+                const start = Date.now();
+                let result;
+                if (timeoutMs) {
+                    result = await this._executeWithTimeout(fn, key, timeoutMs);
+                }
+                else {
+                    result = await fn(key);
+                }
+                const duration = Date.now() - start;
+                this.markSuccess(key, duration);
+                this.emit('executeSuccess', key, duration);
+                return result;
+            }
+            catch (error) {
+                lastError = error;
+                const classification = this.classifyError(error, finishReason);
+                this.markFailed(key, classification);
+                this.emit('executeFailed', key, error);
+                if (!classification.retryable || attempt >= maxRetries) {
+                    // Non-retryable or out of retries
+                    if (this.fallbackFn && attempt >= maxRetries) {
+                        this.emit('fallback', 'max retries exceeded');
+                        return this.fallbackFn();
+                    }
+                    throw error;
+                }
+                // Retry with backoff
+                const delay = this.calculateBackoff(attempt);
+                this.emit('retry', key, attempt + 1, delay);
+                await this._sleep(delay);
+            }
+        }
+        // Should not reach here, but safety net
+        throw lastError;
+    }
+    async _executeWithTimeout(fn, key, timeoutMs) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+            const result = await Promise.race([
+                fn(key, controller.signal),
+                new Promise((_, reject) => {
+                    controller.signal.addEventListener('abort', () => {
+                        reject(new TimeoutError(timeoutMs));
+                    });
+                }),
+            ]);
+            return result;
+        }
+        finally {
+            clearTimeout(timer);
+        }
+    }
+    _sleep(ms) {
+        return new Promise((resolve) => {
+            const timer = setTimeout(resolve, ms);
+            if (timer.unref)
+                timer.unref();
+        });
+    }
+    // ─── Health Checks ───────────────────────────────────────────────────────
+    /**
+     * Set a health check function that tests if a key is operational
+     */
+    setHealthCheck(fn) {
+        this.healthCheckFn = fn;
+    }
+    /**
+     * Start periodic health checks
+     * @param intervalMs How often to run health checks (default: 60s)
+     */
+    startHealthChecks(intervalMs = 60_000) {
+        this.stopHealthChecks(); // Clear any existing interval
+        this.healthCheckInterval = setInterval(() => this._runHealthChecks(), intervalMs);
+        if (this.healthCheckInterval.unref)
+            this.healthCheckInterval.unref();
+    }
+    /**
+     * Stop periodic health checks
+     */
+    stopHealthChecks() {
+        if (this.healthCheckInterval) {
+            clearInterval(this.healthCheckInterval);
+            this.healthCheckInterval = undefined;
+        }
+        // Flush any pending state to disk on shutdown
+        this._flushState();
+    }
+    async _runHealthChecks() {
+        if (!this.healthCheckFn)
+            return;
+        // Check non-DEAD keys that are in OPEN or HALF_OPEN state
+        const keysToCheck = this.keys.filter((k) => k.circuitState === 'OPEN' || k.circuitState === 'HALF_OPEN');
+        for (const k of keysToCheck) {
+            try {
+                const healthy = await this.healthCheckFn(k.key);
+                if (healthy) {
+                    this.markSuccess(k.key);
+                    this.emit('healthCheckPassed', k.key);
+                }
+                else {
+                    this.emit('healthCheckFailed', k.key, new Error('Health check returned false'));
+                }
+            }
+            catch (error) {
+                this.emit('healthCheckFailed', k.key, error);
+            }
+        }
+    }
+    // ─── Persistence ─────────────────────────────────────────────────────────
+    /**
+     * Debounced save — marks state as dirty and flushes after 500ms of inactivity.
+     * Under heavy load (multiple getKey/markSuccess/markFailed calls), this coalesces
+     * dozens of writeFileSync calls into one.
+     */
+    saveState() {
+        if (!this.storage)
+            return;
+        this._saveDirty = true;
+        if (!this._saveTimer) {
+            this._saveTimer = setTimeout(() => {
+                this._flushState();
+                this._saveTimer = undefined;
+            }, 500);
+            if (this._saveTimer.unref)
+                this._saveTimer.unref();
+        }
+    }
+    /**
+     * Immediately flush state to storage. Called by the debounce timer
+     * and by stopHealthChecks() to ensure clean shutdown.
+     */
+    flushState() {
+        this._flushState();
+    }
+    _flushState() {
+        if (!this._saveDirty || !this.storage)
+            return;
+        this._saveDirty = false;
+        if (this._saveTimer) {
+            clearTimeout(this._saveTimer);
+            this._saveTimer = undefined;
+        }
+        const state = this.keys.reduce((acc, k) => ({
+            ...acc,
+            [k.key]: {
+                failCount: k.failCount,
+                failedAt: k.failedAt,
+                isQuotaError: k.isQuotaError,
+                circuitState: k.circuitState,
+                lastUsed: k.lastUsed,
+                successCount: k.successCount,
+                totalRequests: k.totalRequests,
+                customCooldown: k.customCooldown,
+                weight: k.weight,
+                averageLatency: k.averageLatency,
+                totalLatency: k.totalLatency,
+                latencySamples: k.latencySamples,
+                provider: k.provider,
+            },
+        }), {});
+        this.storage.setItem(this.storageKey, JSON.stringify(state));
+    }
+    loadState() {
+        if (!this.storage)
+            return;
+        try {
+            const raw = this.storage.getItem(this.storageKey);
+            if (!raw)
+                return;
+            const data = JSON.parse(raw);
+            const now = Date.now();
+            this.keys.forEach((k) => {
+                if (!data[k.key])
+                    return;
+                Object.assign(k, data[k.key]);
+                // Resurrect DEAD keys that have exceeded the TTL.
+                // This allows keys that were marked dead (e.g., temporary 403)
+                // to be retested after a cooldown period instead of staying dead forever.
+                if (k.circuitState === 'DEAD' && k.failedAt) {
+                    const deadDuration = now - k.failedAt;
+                    if (deadDuration >= CONFIG.DEAD_KEY_TTL) {
+                        k.circuitState = 'HALF_OPEN';
+                        k.halfOpenTestTime = null; // Allow immediate test
+                        k.failCount = 0;
+                    }
+                }
+                // Clear stale cooldowns from previous sessions.
+                // If a key was cooling down and the process restarted after the
+                // cooldown would have expired, reset it to CLOSED.
+                if (k.circuitState === 'OPEN' && k.failedAt) {
+                    const cooldown = k.customCooldown || (k.isQuotaError ? CONFIG.COOLDOWN_QUOTA : CONFIG.COOLDOWN_TRANSIENT);
+                    if (now - k.failedAt >= cooldown) {
+                        k.circuitState = 'HALF_OPEN';
+                        k.halfOpenTestTime = null;
+                    }
+                }
+            });
+        }
+        catch (e) {
+            console.error('Failed to load key state');
+        }
+    }
+}
+exports.ApiKeyManager = ApiKeyManager;
+//# sourceMappingURL=index.js.map
