@@ -1,7 +1,7 @@
 {
     "name": "@splashcodex/api-key-manager",
-    "version": "5.5.1",
-    "description": "Universal API Key Management Gateway with centralized env loader, provider presets, persistence, and multi-provider vault",
+    "version": "5.6.0",
+    "description": "Universal API key manager with dynamic rotation, circuit breaking, fallback routing, and built-in Gateway for Vercel/Cloudflare/Node, persistence, and multi-provider vault",
     "repository": {
         "type": "git",
         "url": "git+https://github.com/SplashCodeDex/ApiKeyManager.git"
@@ -78,6 +78,11 @@
             "require": "./dist/persistence/memory.js",
             "types": "./dist/persistence/memory.d.ts"
         },
+        "./persistence/redis": {
+            "import": "./dist/persistence/redis.js",
+            "require": "./dist/persistence/redis.js",
+            "types": "./dist/persistence/redis.d.ts"
+        },
         "./gateway/config": {
             "import": "./dist/gateway/config.js",
             "require": "./dist/gateway/config.js",
@@ -134,6 +139,9 @@
             ],
             "persistence/memory": [
                 "dist/persistence/memory.d.ts"
+            ],
+            "persistence/redis": [
+                "dist/persistence/redis.d.ts"
             ],
             "gateway/config": [
                 "dist/gateway/config.d.ts"

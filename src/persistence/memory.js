@@ -22,22 +22,29 @@ exports.MemoryStorage = void 0;
  * });
  * ```
  */
-class MemoryStorage {
-    store = new Map();
-    getItem(key) {
-        return this.store.get(key) ?? null;
+var MemoryStorage = /** @class */ (function () {
+    function MemoryStorage() {
+        this.store = new Map();
     }
-    setItem(key, value) {
+    MemoryStorage.prototype.getItem = function (key) {
+        var _a;
+        return (_a = this.store.get(key)) !== null && _a !== void 0 ? _a : null;
+    };
+    MemoryStorage.prototype.setItem = function (key, value) {
         this.store.set(key, value);
-    }
+    };
     /** Clear all stored state */
-    clear() {
+    MemoryStorage.prototype.clear = function () {
         this.store.clear();
-    }
-    /** Get the number of stored entries */
-    get size() {
-        return this.store.size;
-    }
-}
+    };
+    Object.defineProperty(MemoryStorage.prototype, "size", {
+        /** Get the number of stored entries */
+        get: function () {
+            return this.store.size;
+        },
+        enumerable: false,
+        configurable: true
+    });
+    return MemoryStorage;
+}());
 exports.MemoryStorage = MemoryStorage;
-//# sourceMappingURL=memory.js.map

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [5.6.0] — 2026-07 — Redis Persistence & Serverless Support
+
+### Added
+
+- **Redis Persistence Adapter**: Added `RedisStorage` adapter to accurately track quotas across stateless serverless instances (Vercel, Cloudflare Workers). Fixes "Cold Start Amnesia" where quotas reset on container boot.
+- **Client Agnostic**: Accepts any Redis client (e.g. `@upstash/redis`, `ioredis`, standard `redis`) as long as it implements simple `get()` and `set()` methods.
+- **Async Storage Support**: `ApiKeyManager` now supports asynchronous storage adapters via `isAsync` flag. Added `await manager.init()` for initializing state from async data stores.
+
+---
+
 ## [5.5.1] — 2026-07 — Python SDK Deprecated + Provider Expansion
 
 ### Removed

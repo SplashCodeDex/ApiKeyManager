@@ -12,10 +12,10 @@
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.FileStorage = void 0;
-const fs_1 = require("fs");
-const path_1 = require("path");
-const os_1 = require("os");
-const crypto_1 = require("crypto");
+var fs_1 = require("fs");
+var path_1 = require("path");
+var os_1 = require("os");
+var crypto_1 = require("crypto");
 /**
  * File-based storage adapter for ApiKeyManager.
  *
@@ -29,11 +29,11 @@ const crypto_1 = require("crypto");
  * });
  * ```
  */
-class FileStorage {
-    filePath;
-    encryptionKey = null;
-    algorithm = 'aes-256-gcm';
-    constructor(options = {}) {
+var FileStorage = /** @class */ (function () {
+    function FileStorage(options) {
+        if (options === void 0) { options = {}; }
+        this.encryptionKey = null;
+        this.algorithm = 'aes-256-gcm';
         this.filePath = options.filePath || (0, path_1.join)((0, os_1.tmpdir)(), 'codedex_api_key_state.json');
         // Resolve encryption key if configured
         if (options.encryption) {
@@ -44,68 +44,68 @@ class FileStorage {
             this.clear();
         }
     }
-    getItem(_key) {
+    FileStorage.prototype.getItem = function (_key) {
         try {
             if ((0, fs_1.existsSync)(this.filePath)) {
-                const raw = (0, fs_1.readFileSync)(this.filePath, 'utf-8');
+                var raw = (0, fs_1.readFileSync)(this.filePath, 'utf-8');
                 return this.decrypt(raw);
             }
         }
-        catch {
+        catch (_a) {
             // Silently fail — state will be rebuilt from scratch
         }
         return null;
-    }
-    setItem(_key, value) {
-        const tmpPath = this.filePath + '.tmp';
+    };
+    FileStorage.prototype.setItem = function (_key, value) {
+        var tmpPath = this.filePath + '.tmp';
         try {
-            const dir = (0, path_1.dirname)(this.filePath);
+            var dir = (0, path_1.dirname)(this.filePath);
             if (!(0, fs_1.existsSync)(dir)) {
                 (0, fs_1.mkdirSync)(dir, { recursive: true });
             }
             // Write to a temp file first, then atomically rename to the target.
             // renameSync() is a single syscall — the file is never in a
             // half-written state if the process crashes mid-write.
-            const data = this.encrypt(value);
+            var data = this.encrypt(value);
             (0, fs_1.writeFileSync)(tmpPath, data, 'utf-8');
             (0, fs_1.renameSync)(tmpPath, this.filePath);
         }
-        catch {
+        catch (_a) {
             // Clean up temp file if rename failed
             try {
                 if ((0, fs_1.existsSync)(tmpPath))
                     (0, fs_1.unlinkSync)(tmpPath);
             }
-            catch {
+            catch (_b) {
                 /* silent */
             }
             // Silently fail — state will be lost on restart
         }
-    }
+    };
     /**
      * Delete the persisted state file.
      * Useful for clearing stale dead-key states from a previous session.
      */
     // ─── Encryption ────────────────────────────────────────────────────────
-    resolveKey(opts) {
+    FileStorage.prototype.resolveKey = function (opts) {
         if (opts.key)
             return Buffer.from(opts.key.padEnd(64, '0').slice(0, 64), 'hex');
         if (opts.keyDerivation) {
-            const { password, salt, iterations, keyLength, digest } = opts.keyDerivation;
-            return (0, crypto_1.pbkdf2Sync)(password, salt, iterations || 100_000, keyLength || 32, digest || 'sha256');
+            var _a = opts.keyDerivation, password = _a.password, salt = _a.salt, iterations = _a.iterations, keyLength = _a.keyLength, digest = _a.digest;
+            return (0, crypto_1.pbkdf2Sync)(password, salt, iterations || 100000, keyLength || 32, digest || 'sha256');
         }
         throw new Error('[FileStorage] encryption requires `key` or `keyDerivation`');
-    }
-    encrypt(plaintext) {
+    };
+    FileStorage.prototype.encrypt = function (plaintext) {
         if (!this.encryptionKey)
             return plaintext;
-        const iv = (0, crypto_1.randomBytes)(12);
-        const cipher = (0, crypto_1.createCipheriv)(this.algorithm, this.encryptionKey, iv);
-        const encrypted = Buffer.concat([cipher.update(plaintext, 'utf-8'), cipher.final()]);
-        const tag = this.algorithm === 'aes-256-gcm' ? cipher.getAuthTag() : Buffer.alloc(0);
+        var iv = (0, crypto_1.randomBytes)(12);
+        var cipher = (0, crypto_1.createCipheriv)(this.algorithm, this.encryptionKey, iv);
+        var encrypted = Buffer.concat([cipher.update(plaintext, 'utf-8'), cipher.final()]);
+        var tag = this.algorithm === 'aes-256-gcm' ? cipher.getAuthTag() : Buffer.alloc(0);
         return 'CODEDEX_ENC_V1:' + Buffer.concat([iv, tag, encrypted]).toString('base64');
-    }
-    decrypt(data) {
+    };
+    FileStorage.prototype.decrypt = function (data) {
         if (!data.startsWith('CODEDEX_ENC_V1:'))
             return data;
         if (!this.encryptionKey) {
@@ -113,11 +113,11 @@ class FileStorage {
             return null;
         }
         try {
-            const payload = Buffer.from(data.slice(15), 'base64'); // skip 'CODEDEX_ENC_V1:' prefix
-            const iv = payload.subarray(0, 12);
-            const tag = this.algorithm === 'aes-256-gcm' ? payload.subarray(12, 28) : undefined;
-            const ct = tag ? payload.subarray(28) : payload.subarray(12);
-            const decipher = (0, crypto_1.createDecipheriv)(this.algorithm, this.encryptionKey, iv);
+            var payload = Buffer.from(data.slice(15), 'base64'); // skip 'CODEDEX_ENC_V1:' prefix
+            var iv = payload.subarray(0, 12);
+            var tag = this.algorithm === 'aes-256-gcm' ? payload.subarray(12, 28) : undefined;
+            var ct = tag ? payload.subarray(28) : payload.subarray(12);
+            var decipher = (0, crypto_1.createDecipheriv)(this.algorithm, this.encryptionKey, iv);
             if (tag)
                 decipher.setAuthTag(tag);
             return Buffer.concat([decipher.update(ct), decipher.final()]).toString('utf-8');
@@ -126,24 +126,24 @@ class FileStorage {
             console.error('[FileStorage] Decryption failed:', err.message);
             return null;
         }
-    }
-    isEncrypted() {
+    };
+    FileStorage.prototype.isEncrypted = function () {
         return this.encryptionKey !== null;
-    }
-    clear() {
+    };
+    FileStorage.prototype.clear = function () {
         try {
             if ((0, fs_1.existsSync)(this.filePath)) {
                 (0, fs_1.unlinkSync)(this.filePath);
             }
         }
-        catch {
+        catch (_a) {
             // Silently fail
         }
-    }
+    };
     /** Get the path to the state file (for debugging/logging) */
-    getFilePath() {
+    FileStorage.prototype.getFilePath = function () {
         return this.filePath;
-    }
-}
+    };
+    return FileStorage;
+}());
 exports.FileStorage = FileStorage;
-//# sourceMappingURL=file.js.map

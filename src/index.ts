@@ -28,6 +28,8 @@ import { z } from 'zod';
 export { FileStorage } from './persistence/file';
 export type { FileStorageOptions, EncryptionOptions } from './persistence/file';
 export { MemoryStorage } from './persistence/memory';
+export { RedisStorage } from './persistence/redis';
+export type { RedisStorageOptions, RedisClient } from './persistence/redis';
 
 // ─── Presets ─────────────────────────────────────────────────────────────────
 // Presets are available via subpath imports to avoid circular dependencies:
@@ -428,7 +430,9 @@ export class ApiKeyManager extends EventEmitter {
             provider: meta.provider,
         }));
 
-        this.loadState();
+        if (!this.storage.isAsync) {
+            this.loadState();
+        }
     }
 
     // ─── Error Classification ────────────────────────────────────────────────
@@ -1131,7 +1135,22 @@ export class ApiKeyManager extends EventEmitter {
             }),
             {},
         );
-        this.storage.setItem(this.storageKey, JSON.stringify(state));
+        
+        const serialized = JSON.stringify(state);
+        
+        if (this.storage.isAsync) {
+            // Fire and forget for async storage to avoid blocking the main thread,
+            // but catch errors to prevent unhandled promise rejections.
+            Promise.resolve(this.storage.setItem(this.storageKey, serialized)).catch((err) => {
+                console.error('[ApiKeyManager] Async storage setItem failed:', err);
+            });
+        } else {
+            try {
+                this.storage.setItem(this.storageKey, serialized);
+            } catch (err) {
+                console.error('[ApiKeyManager] Sync storage setItem failed:', err);
+            }
+        }
     }
 
     private loadState() {
@@ -1139,6 +1158,34 @@ export class ApiKeyManager extends EventEmitter {
         try {
             const raw = this.storage.getItem(this.storageKey);
             if (!raw) return;
+            this._applyState(raw);
+        } catch (e) {
+            console.error('[ApiKeyManager] Failed to load key state synchronously:', e);
+        }
+    }
+
+    /**
+     * Call this after instantiating ApiKeyManager if you are using an async storage adapter (e.g. Redis).
+     */
+    public async init(): Promise<void> {
+        if (this.storage && this.storage.isAsync) {
+            await this.loadStateAsync();
+        }
+    }
+
+    private async loadStateAsync() {
+        if (!this.storage) return;
+        try {
+            const raw = await this.storage.getItem(this.storageKey);
+            if (!raw) return;
+            this._applyState(raw);
+        } catch (e) {
+            console.error('[ApiKeyManager] Failed to load key state asynchronously:', e);
+        }
+    }
+
+    private _applyState(raw: string) {
+        try {
             const data = JSON.parse(raw);
             const now = Date.now();
 
@@ -1171,7 +1218,7 @@ export class ApiKeyManager extends EventEmitter {
                 }
             });
         } catch (e) {
-            console.error('Failed to load key state');
+            console.error('[ApiKeyManager] Failed to parse key state:', e);
         }
     }
 }

@@ -19,6 +19,7 @@ import { loadCentralEnv } from '../src/env';
 import Fastify, { FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
 import { MultiManager } from '../src/presets/multi';
+import { RedisStorage, RedisClient } from '../src/persistence/redis';
 import { loadConfig, ProviderDefinition } from './config';
 import {
     createProxyFn,
@@ -43,6 +44,33 @@ interface AuditEntry {
     statusCode: number | null;
     latencyMs: number | null;
     error: string | null;
+}
+
+// ─── Zero-Dependency Upstash Redis Client ───────────────────────────────────
+
+class FetchRedisClient implements RedisClient {
+    constructor(private url: string, private token: string) {
+        // Strip trailing slash if present
+        this.url = this.url.replace(/\/$/, '');
+    }
+
+    async get(key: string): Promise<string | null> {
+        const res = await fetch(`${this.url}/get/${encodeURIComponent(key)}`, {
+            headers: { Authorization: `Bearer ${this.token}` },
+        });
+        if (!res.ok) throw new Error(`Redis GET failed: ${res.statusText}`);
+        const data = await res.json();
+        return data.result ? String(data.result) : null;
+    }
+
+    async set(key: string, value: string): Promise<void> {
+        const res = await fetch(`${this.url}/set/${encodeURIComponent(key)}`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${this.token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify(value),
+        });
+        if (!res.ok) throw new Error(`Redis SET failed: ${res.statusText}`);
+    }
 }
 
 // ─── Factory: buildGatewayApp ─────────────────────────────────────────────────
@@ -76,9 +104,26 @@ export async function buildGatewayApp(options: { port?: number; host?: string; h
         providerMap.set(p.name, p);
     }
 
+    let storageFactory: ((providerName: string, projectId: string) => any) | undefined;
+    
+    // Check for Upstash Redis configuration
+    const redisUrl = process.env.UPSTASH_REDIS_REST_URL;
+    const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
+    if (redisUrl && redisToken) {
+        console.log(`\x1b[36m[gateway]\x1b[0m Upstash Redis configuration detected. Using RedisStorage for state persistence.`);
+        const redisClient = new FetchRedisClient(redisUrl, redisToken);
+        storageFactory = (providerName: string, projectId: string) => {
+            return new RedisStorage({
+                client: redisClient,
+                keyPrefix: `codedex_multi_${providerName}_${projectId}_`,
+            });
+        };
+    }
+
     const managerResult = MultiManager.getInstance({
         providers: providerConfigs,
         healthCheckIntervalMs: options.healthCheckIntervalMs || 300_000,
+        storageFactory,
         logger: {
             info: (msg: string) => log('info', 'gateway', msg),
             warn: (msg: string) => log('warn', 'gateway', msg),
@@ -93,6 +138,9 @@ export async function buildGatewayApp(options: { port?: number; host?: string; h
     }
 
     const vault = managerResult.data;
+    
+    // ─── Initialize Async Storage (if applicable) ─────────────────────────
+    await vault.init();
 
     // ─── Rate Limiter (per-app sliding window) ──────────────────────────────
 

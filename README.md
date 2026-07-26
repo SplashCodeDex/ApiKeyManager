@@ -6,12 +6,21 @@
 [![License: ISC](https://img.shields.io/badge/License-ISC-blue.svg)](LICENSE)
 [![CI](https://github.com/SplashCodeDex/ApiKeyManager/actions/workflows/test.yml/badge.svg)](https://github.com/SplashCodeDex/ApiKeyManager/actions/workflows/test.yml)
 
+# @splashcodex/ApiKeyManager v5.4 — Ecosystem Edition
+
+> Universal API Key Management Gateway with Provider Presets, Built-in Persistence, Multi-Provider Vault, and Production-Hardened Transparent Proxy.
+
+[![npm version](https://img.shields.io/npm/v/@splashcodex/ApiKeyManager)](https://www.npmjs.com/package/@splashcodex/ApiKeyManager)
+[![License: ISC](https://img.shields.io/badge/License-ISC-blue.svg)](LICENSE)
+[![CI](https://github.com/SplashCodeDex/ApiKeyManager/actions/workflows/test.yml/badge.svg)](https://github.com/SplashCodeDex/ApiKeyManager/actions/workflows/test.yml)
+
 ---
 
 ## 📖 Table of Contents
 
 - [Why This Project?](#-why-this-project)
 - [Architecture Overview](#-architecture-overview)
+- [What's New in v5.6](#-whats-new-in-v56)
 - [What's New in v5.4](#-whats-new-in-v54)
 - [Installation](#-installation)
 - [Quick Start](#-quick-start)
@@ -83,6 +92,13 @@ Read more in [`WhyThisProject.md`](./WhyThisProject.md).
 │  • Graceful Shutdown (SIGTERM/SIGINT)                       │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## 🆕 What's New in v5.6
+
+### Redis Persistence for Serverless
+Added `RedisStorage` to accurately track API key quota usage across stateless serverless containers (e.g. Vercel, Cloudflare Workers). It is completely client-agnostic—use `@upstash/redis`, `ioredis`, or standard `redis`. Also introduced `await manager.init()` for async storage booting.
 
 ---
 
@@ -392,7 +408,8 @@ All presets share these defaults:
 | Class | Subpath Import | Description |
 |-------|---------------|-------------|
 | `FileStorage` | `.../persistence/file` | Persists to a JSON file with atomic writes (write-tmp → rename). Best for servers and long-running processes. |
-| `MemoryStorage` | `.../persistence/memory` | In-memory only. Best for serverless, testing, or short-lived processes. |
+| `MemoryStorage` | `.../persistence/memory` | In-memory only. Best for serverless, testing, or short-lived processes (will lose quota counts on restart). |
+| `RedisStorage` | `.../persistence/redis` | Persists to Redis. Client-agnostic. **Best for Serverless** to prevent "Cold Start Amnesia" across instances. |
 
 ### Core `ApiKeyManager`
 
@@ -426,187 +443,6 @@ new ApiKeyManager(keys, {
 | `markSuccess(key, durationMs?)` | Mark a key as healthy, update latency stats |
 | `markFailed(key, classification)` | Mark a key as failed, trigger circuit breaker |
 | `classifyError(error, finishReason?)` | Classify an error: `QUOTA`, `AUTH`, `TRANSIENT`, `SAFETY`, `RECITATION`, `TIMEOUT`, `BAD_REQUEST`, `UNKNOWN` |
-| `setHealthCheck(fn)` | Set a health check function `(key) => Promise<boolean>` |
-| `startHealthChecks(intervalMs?)` | Start periodic health checks (default: 60s) |
-| `stopHealthChecks()` | Stop health checks and flush state to disk |
-| `flushState()` | Immediately flush state to storage |
-| `calculateBackoff(attempt)` | Get backoff delay for a given attempt (decorrelated jitter) |
-
-#### ExecuteOptions
-
-```typescript
-interface ExecuteOptions {
-    timeoutMs?: number;       // Timeout per attempt (ms)
-    maxRetries?: number;      // Max retries (default: 0 = no retry)
-    finishReason?: string;    // Gemini finishReason handling (SAFETY, RECITATION)
-    provider?: string;        // Filter keys by provider tag
-    prompt?: string;          // For semantic cache lookup
-}
-```
-
-#### Load Balancing Strategies
-
-| Strategy | Description |
-|----------|-------------|
-| `StandardStrategy` | Least failed → Least recently used |
-| `WeightedStrategy` | Probabilistic selection based on key weight (0.0–1.0) |
-| `LatencyStrategy` | Lowest average latency with LRU tie-break (default for presets) |
-
-### Multi-Provider Vault
-
-```typescript
-import { MultiManager } from '@splashcodex/api-key-manager/presets/multi';
-
-const result = MultiManager.getInstance({
-    providers: {
-        gemini: {
-            envKeys: ['GOOGLE_GEMINI_API_KEY'],
-            strategy: new LatencyStrategy(),
-            concurrency: 15,
-        },
-        openai: {
-            envKeys: ['OPENAI_API_KEY'],
-            concurrency: 10,
-        },
-        anthropic: {
-            envKeys: ['ANTHROPIC_API_KEY'],
-        },
-    },
-    healthCheckIntervalMs: 300_000,  // 5 minutes
-    logger: {
-        info: (msg) => console.log(msg),
-        warn: (msg) => console.warn(msg),
-        error: (msg) => console.error(msg),
-    },
-});
-
-if (!result.success) {
-    console.error(result.error.message);
-    process.exit(1);
-}
-
-const vault = result.data;
-
-// Route to a specific provider
-const text = await vault.execute(apiCall, { provider: 'gemini', maxRetries: 3 });
-
-// Stream from a provider
-const stream = vault.executeStream(streamApiCall, { provider: 'openai' });
-
-// Get stats per provider
-vault.getStats('gemini');  // { total, healthy, cooling, dead }
-vault.getMultiStats();     // { gemini: {...}, openai: {...} }
-vault.getProviders();      // ['gemini', 'openai', 'anthropic']
-
-// Clean shutdown
-vault.destroy();
-```
-
----
-
-## ⚡ Advanced Features
-
-### Circuit Breaker States
-
-```
-CLOSED ──fail──▶ OPEN ──cooldown──▶ HALF_OPEN ──success──▶ CLOSED
-  ▲                                  │                       
-  │                              fail│                       
-  └──────────────────────────────────┘                       
-                    │
-              (5 consecutive failures or 403)
-                    ▼
-                  DEAD (retested after 1 hour TTL)
-```
-
-Keys transition through states automatically based on error classification. `QUOTA` (429) errors open the circuit immediately. `AUTH` (403) errors mark the key as permanently dead.
-
-### Error Classification
-
-| Error Type | HTTP Code | Retryable? | Effect on Key |
-|------------|-----------|------------|---------------|
-| `QUOTA` | 429 | Yes | Opens circuit, respects `Retry-After` header |
-| `AUTH` | 403 | No | Marks key **DEAD** permanently |
-| `TRANSIENT` | 500/502/503/504 | Yes | Increments fail count, 1min cooldown |
-| `TIMEOUT` | — | Yes | Increments fail count, 1min cooldown |
-| `SAFETY` | — | No | **No effect** on key (not a key issue) |
-| `RECITATION` | — | No | **No effect** on key (not a key issue) |
-| `BAD_REQUEST` | 400 | No | **No effect** on key (fix your request) |
-
-### Semantic Cache
-
-Cache API responses by semantic similarity, not exact text match:
-
-```typescript
-const manager = new ApiKeyManager(keys, {
-    semanticCache: {
-        threshold: 0.92,  // Cosine similarity threshold
-        ttlMs: 24 * 60 * 60 * 1000,  // 24 hours
-        getEmbedding: async (text) => await myEmbeddingModel.embed(text),
-    },
-});
-
-// First call — cache MISS, goes to API
-const r1 = await manager.execute(apiCall, { prompt: 'What is the capital of France?' });
-
-// Second call — cache HIT (semantically similar)
-const r2 = await manager.execute(apiCall, { prompt: 'Tell me the capital city of France' });
-// Returns cached response — zero API cost!
-
-// Works with streaming too
-const stream = await manager.executeStream(streamApiCall, { prompt: 'What is the weather?' });
-```
-
-The cache uses vanilla cosine similarity math with no external dependencies. Max 500 entries (FIFO eviction). Includes a recursion guard for when `getEmbedding` itself calls `execute()`.
-
-### Concurrency Control (Bulkhead)
-
-Limit concurrent `execute()` calls to prevent overwhelming providers:
-
-```typescript
-const manager = new ApiKeyManager(keys, {
-    concurrency: 20,            // Max 20 concurrent calls
-    concurrencyQueueSize: 10,   // Queue up to 10 waiting (FIFO)
-});
-
-// When all 20 slots are busy:
-//   - Requests 21-30 wait in the queue (drain as slots free)
-//   - Request 31+ throws BulkheadRejectionError immediately
-//   - The 'bulkheadRejected' event fires on rejections
-```
-
-Backed by **[cockatiel](https://github.com/connor4312/cockatiel)** for production-grade concurrency management.
-
-### Exponential Backoff
-
-Uses **decorrelated jitter** (statistically superior to simple random jitter):
-
-| Attempt | Base Delay | With Jitter (range) |
-|---------|-----------|---------------------|
-| 1 | 1s | 0.5s – 1.5s |
-| 2 | 2s | 1s – 3s |
-| 3 | 4s | 2s – 6s |
-| 4 | 8s | 4s – 12s |
-| 5+ | 16s | 8s – 24s |
-
-Max backoff: 64 seconds. Backed by cockatiel's `ExponentialBackoff` with `decorrelatedJitterGenerator`.
-
-### Persistence
-
-State survives restarts — cooled-down keys stay cooled-down across reboots:
-
-```typescript
-import { FileStorage } from '@splashcodex/api-key-manager/persistence/file';
-
-const storage = new FileStorage({
-    filePath: './api_state.json',  // Default: os.tmpdir()/codedex_api_key_state.json
-    clearOnInit: false,            // Default: true (false = preserve state)
-});
-
-// Atomic writes: write → tmp → rename (never half-written)
-// Auto-creates parent directories
-// Silently handles permission errors
-```
 
 The `BasePreset` automatically uses `FileStorage` with per-project state files (e.g., `codedex_gemini_whatsdex_a3f2_state.json`) to avoid collisions between projects.
 

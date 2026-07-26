@@ -81,6 +81,8 @@ export interface MultiManagerOptions {
         warn(msg: string, ...args: any[]): void;
         error(msg: string, ...args: any[]): void;
     };
+    /** Factory to provide a custom storage adapter per provider (defaults to FileStorage) */
+    storageFactory?: (providerName: string, projectId: string) => ApiKeyManagerOptions['storage'];
 }
 
 // ─── MultiManager ───────────────────────────────────────────────────────────
@@ -105,10 +107,13 @@ export class MultiManager {
             }
 
             const projectId = getProjectId();
-            const storage = new FileStorage({
-                filePath: join(tmpdir(), `codedex_multi_${providerName}_${projectId}_state.json`),
-                clearOnInit: false, // Preserve circuit breaker state across restarts
-            });
+            
+            const storage = options.storageFactory
+                ? options.storageFactory(providerName, projectId)
+                : new FileStorage({
+                      filePath: join(tmpdir(), `codedex_multi_${providerName}_${projectId}_state.json`),
+                      clearOnInit: false, // Preserve circuit breaker state across restarts
+                  });
 
             const manager = new ApiKeyManager(keys, {
                 storage,
@@ -161,6 +166,17 @@ export class MultiManager {
                 error: error instanceof Error ? error : new Error(String(error)),
             };
         }
+    }
+
+    /**
+     * Initializes all underlying managers (required if using async storage like Redis).
+     */
+    public async init(): Promise<void> {
+        const promises: Promise<void>[] = [];
+        for (const [_, manager] of this.managers) {
+            promises.push(manager.init());
+        }
+        await Promise.all(promises);
     }
 
     /**
